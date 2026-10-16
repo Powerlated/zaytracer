@@ -41,6 +41,21 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    const sdl_dep = b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+        //.preferred_linkage = .static,
+        //.strip = null,
+        //.sanitize_c = null,
+        //.pic = null,
+        //.lto = null,
+        //.emscripten_pthreads = false,
+        //.system_include_path = null,
+        //.system_framework_path = null,
+        //.library_path = null,
+    });
+    const sdl_lib = sdl_dep.artifact("SDL3");
+
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
     // to the module defined above, it's sometimes preferable to split business
@@ -79,6 +94,7 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "zaytracer", .module = mod },
+                .{ .name ="SDL3", .module=sdl_lib.root_module }
             },
         }),
     });
