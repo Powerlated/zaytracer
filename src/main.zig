@@ -35,7 +35,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     _ = c.SDL_SetAppMetadata("Example Renderer Geometry", "1.0", "com.example.renderer-geometry");
 
     try errify(c.SDL_Init(c.SDL_INIT_VIDEO));
-    try errify(c.SDL_CreateWindowAndRenderer("SDL in Zig", WINDOW_WIDTH, WINDOW_HEIGHT, 0, @ptrCast(&window), @ptrCast(&renderer)));
+    try errify(c.SDL_CreateWindowAndRenderer("Brian Jia - Zaytracer", WINDOW_WIDTH, WINDOW_HEIGHT, 0, @ptrCast(&window), @ptrCast(&renderer)));
     _ = c.SDL_SetRenderLogicalPresentation(renderer, WINDOW_WIDTH, WINDOW_HEIGHT, c.SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
     // Textures are pixel data that we upload to the video hardware for fast drawing. Lots of 2D

@@ -55,7 +55,7 @@ const Mat33 = struct {
         const d = v[3]; const e = v[4]; const f = v[5];
         const g = v[6]; const h = v[7]; const i = v[8];
         
-        return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
+        return (a*e*i + b*f*g + c*d*h) - (c*e*g + a*f*h + b*d*i);
     }
 
     // Calculates determinant of `self`, with column at column index (0-indexed)
@@ -88,6 +88,10 @@ const Mat33 = struct {
 
 const Rgbf32 = struct {
     val: @Vector(3, f32),
+
+    fn from_rgb_f32(r: f32, g: f32, b: f32) Rgbf32 {
+        return .{ .val = .{r, g, b} };
+    }
 
     fn color_f32_to_255(color_f32: f32) u32 {
         return @as(u32, @as(u8, @intFromFloat(std.math.clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5)));
@@ -181,11 +185,6 @@ const Triangle = struct {
         const u = A.det_with_col_replaced(b, 1) / A.det();
         const v = A.det_with_col_replaced(b, 2) / A.det();
 
-        // Return null if intersection of line with triangle is not inside triangle
-        if (u + v > 1) {
-            return null;
-        }
-
         // Return null if intersection of line with triangle is *behind* the direction vector
         if (t < 0) {
             return null;
@@ -193,6 +192,11 @@ const Triangle = struct {
 
         // Recover w 
         const w = 1 - u - v;
+
+        // Return null if intersection of line with triangle is not inside triangle
+        if (w < 0 or u < 0 or v < 0) {
+            return null;
+        }
         
         // Obtain intersection point, from the definition of barycentric coordinates
         const P = v1.mul(w).add(v2.mul(u)).add(v3.mul(v));
@@ -286,6 +290,21 @@ const Triangle = struct {
         try TriangleTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
     }
 
+    test "non-intersection 3" {
+        const ray_pos = Vec3.from_xyz(1, -1, 0);
+        const ray_dir = Vec3.from_xyz(0, 0, 1);
+
+        const tri: Triangle = .{
+            .v = .{
+                Vec3.from_xyz( 0.5, 0.5,  1),
+                Vec3.from_xyz(-0.5, 0.5,  1),
+                Vec3.from_xyz( 0,  -0.5,  1)
+            }
+        };
+
+        try TriangleTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+    }
+
 };
 
 const Sphere = struct {
@@ -344,8 +363,7 @@ pub fn zaytrace_init() !void {
     // geo.append(root.gpa, Sphere{.center = } );
 }
 
-pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
-    
+pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
     for (&buf.*, 0..) |*row_pixels, row| {
         // map row to normalized y coordinates
         //     (Vulkan style, [-1, -1] xy is the top left corner of the screen)
@@ -358,6 +376,46 @@ pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
             px.* = hsv_to_rgb(hue_deg, 1, 1).to_argb8888(1.0);
         }
     }
+}
+
+pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
+    for (&buf.*, 0..) |*row_pixels, row| {
+        // map row to normalized y coordinates
+        //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
+        //      and z points into the screen, away from the viewer.)
+        const norm_y = mapRange(f32, @floatFromInt(row), 0, main.WINDOW_HEIGHT, -1, 1);
+        for (row_pixels, 0..) |*px, col| {
+            const norm_x = mapRange(f32, @floatFromInt(col), 0, main.WINDOW_WIDTH, -1, 1);
+            px.* = zaytrace_image_inner(norm_x, norm_y).to_argb8888(1);
+        }
+    }
+}
+
+fn zaytrace_image_inner(norm_x: f32, norm_y: f32) Rgbf32 {
+    // const SCALE_X = main.WINDOW_WIDTH;
+    // const SCALE_Y = main.WINDOW_HEIGHT;
+    const SCALE_X = 1;
+    const SCALE_Y = 1;
+
+    const x = SCALE_X * norm_x;
+    const y = SCALE_Y * norm_y;
+
+    const ray_pos = Vec3.from_xyz(x, y, 0);
+    const ray_dir = Vec3.from_xyz(0, 0, 1);
+
+    const tri: Triangle = .{
+        .v = .{
+            Vec3.from_xyz( 0.5, 0.5,  1),
+            Vec3.from_xyz(-0.5, 0.5,  1),
+            Vec3.from_xyz( 0,  -0.5,  1)
+        }
+    };
+    
+    if (tri.intersect(ray_pos, ray_dir)) |_| {
+        return Rgbf32.from_rgb_f32(1, 0, 0);
+    }
+
+    return Rgbf32.from_rgb_f32(0, 0, 0);
 }
 
 test {
