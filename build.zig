@@ -47,7 +47,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         //.preferred_linkage = .static,
         //.strip = null,
-        //.sanitize_c = null,
+        .sanitize_c = .full,
         //.pic = null,
         //.lto = null,
         //.emscripten_pthreads = false,

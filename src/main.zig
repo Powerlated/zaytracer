@@ -16,6 +16,7 @@ const target_triple: [:0]const u8 = x: {
 };
 
 const zaytracer = @import("zaytracer");
+const zaytracer_core = @import("zaytracer_core.zig");
 
 // We will use this renderer to draw into this window every frame.
 var window: *c.SDL_Window = undefined;
@@ -25,8 +26,8 @@ var texture_width: c_int = 0;
 var texture_height: c_int = 0;
 var surface: *c.SDL_Surface = undefined;
 
-const WINDOW_WIDTH: c_int = 640;
-const WINDOW_HEIGHT: c_int = 480;
+pub const WINDOW_WIDTH: c_int = 640;
+pub const WINDOW_HEIGHT: c_int = 480;
 
 fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     _ = appstate;
@@ -41,7 +42,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     // engines refer to these as "sprites." We'll do a static texture (upload once, draw many
     // times) with data from a bitmap file.
 
-    surface = try errify(c.SDL_CreateSurface(WINDOW_WIDTH, WINDOW_HEIGHT, c.SDL_PIXELFORMAT_RGBA8888));
+    surface = try errify(c.SDL_CreateSurface(WINDOW_WIDTH, WINDOW_HEIGHT, c.SDL_PIXELFORMAT_ARGB8888));
 
     texture_width = surface.w;
     texture_height = surface.h;
@@ -55,16 +56,15 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
 fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
     _ = appstate;
 
-    var dst_rect: c.SDL_FRect = .{
-        .x = @floatFromInt(0),
-        .y = @floatFromInt(0),
-        .w = @floatFromInt(texture_width),
-        .h = @floatFromInt(texture_height),
-    };
 
-    try errify(c.SDL_RenderTexture(renderer, texture, null, &dst_rect));
+    zaytracer_core.zaytrace_image(@ptrCast(@alignCast(surface.pixels)));
 
     try errify(c.SDL_RenderClear(renderer));
+    
+    try errify(c.SDL_UpdateTexture(texture, null, surface.pixels, surface.pitch));
+    // null srcrect and dstrect mean the entire rendering target
+    try errify(c.SDL_RenderTexture(renderer, texture, null, null));
+
     try errify(c.SDL_RenderPresent(renderer));
 
     return c.SDL_APP_CONTINUE;
