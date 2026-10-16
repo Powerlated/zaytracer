@@ -107,24 +107,34 @@ const Rgbf32 = struct {
 
 const GeoTag = enum(u8) {
     triangle = 1,
-    sphere = 2,
+    // sphere = 2,
 };
 
 const Geo = union(GeoTag) {
     triangle: Triangle,
-    sphere: Sphere,
+    // sphere: Sphere,
+};
+
+const TriangleIntersection = struct {
+    w: f32, u: f32, v: f32,
+};
+
+const IntersectionGeo = union(GeoTag) {
+    triangle: TriangleIntersection,
+    // sphere: null
 };
 
 const Intersection = struct {
     p: Vec3, // Point of intersection
     n: Vec3, // Normalized normal vector of intersection surface
+    geo: IntersectionGeo
 };
  
 const Triangle = struct {
     // Vertices. typical notation in math is (A, B, C)
     v: [3]Vec3 = @splat(Vec3.from_xyz(0,0,0)), 
     // Per-vertex color
-    color: [3]@Vector(3, f32) = @splat(@splat(0)), 
+    colors: [3]@Vector(3, f32) = @splat(@splat(0)), 
     // TODO: derive normal direction from winding order?
     // n: Vec3, // n^\hat is normalized normal vector 
 
@@ -203,7 +213,12 @@ const Triangle = struct {
 
         return Intersection {
             .p = P,
-            .n = n.normalize()
+            .n = n.normalize(),
+            .geo = .{
+                .triangle = .{
+                    .w=w, .u=u, .v=v
+                }
+            }
         };
     }
 
@@ -408,11 +423,24 @@ fn zaytrace_image_inner(norm_x: f32, norm_y: f32) Rgbf32 {
             Vec3.from_xyz( 0.5, 0.5,  1),
             Vec3.from_xyz(-0.5, 0.5,  1),
             Vec3.from_xyz( 0,  -0.5,  1)
+        },
+        .colors = .{
+            .{1, 0, 0},
+            .{0, 1, 0},
+            .{0, 0, 1}
         }
     };
-    
-    if (tri.intersect(ray_pos, ray_dir)) |_| {
-        return Rgbf32.from_rgb_f32(1, 0, 0);
+
+    if (tri.intersect(ray_pos, ray_dir)) |inter| {
+        const w = inter.geo.triangle.w;
+        const v = inter.geo.triangle.v;
+        const u = inter.geo.triangle.u;
+
+        const r = w*tri.colors[0][0] + v*tri.colors[1][0] + u*tri.colors[2][0];
+        const g = w*tri.colors[0][1] + v*tri.colors[1][1] + u*tri.colors[2][1];
+        const b = w*tri.colors[0][2] + v*tri.colors[1][2] + u*tri.colors[2][2];
+        
+        return Rgbf32.from_rgb_f32(r, g, b);
     }
 
     return Rgbf32.from_rgb_f32(0, 0, 0);
