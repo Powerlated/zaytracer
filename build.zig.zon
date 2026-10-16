@@ -36,6 +36,10 @@
             .url = "git+https://github.com/castholm/SDL.git#dbcb19aa3583c318556ecae3ecbeb29b102d37c5",
             .hash = "sdl-0.6.0+3.4.18-SDL--p-gqAGWpnfTLlhs0dgjDtc4P4_CHeNLGY_SX_Fv",
         },
+        .translate_c = .{
+            .url = "git+https://codeberg.org/ziglang/translate-c?ref=2.0.2#c11030012dc325d446474d17b78c242fd1d622ec",
+            .hash = "translate_c-2.0.2-Q_BUWvBNBwBgPKQJPblip6M7AHNK_IPNPmyv4rSIQMQc",
+        },
     },
     .paths = .{
         "build.zig",

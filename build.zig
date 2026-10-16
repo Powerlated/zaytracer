@@ -1,4 +1,5 @@
 const std = @import("std");
+const translate_c = @import("translate_c");
 
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
@@ -56,6 +57,21 @@ pub fn build(b: *std.Build) void {
     });
     const sdl_lib = sdl_dep.artifact("SDL3");
 
+    // https://github.com/castholm/zig-examples/blob/master/breakout/build.zig#L31
+    const translate_c_dep = b.dependency("translate_c", .{});
+    const translator: translate_c.Translator = .init(translate_c_dep, .{
+        .c_source_file = b.addWriteFiles().add("c.h",
+            \\#define SDL_DISABLE_OLD_NAMES
+            \\#include <SDL3/SDL.h>
+            \\#include <SDL3/SDL_revision.h>
+            \\#define SDL_MAIN_HANDLED
+            \\#include <SDL3/SDL_main.h>
+        ),
+        .target = target,
+        .optimize = optimize,
+    });
+    translator.linkLibrary(sdl_lib);
+
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
     // to the module defined above, it's sometimes preferable to split business
@@ -94,7 +110,8 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "zaytracer", .module = mod },
-                .{ .name ="SDL3", .module=sdl_lib.root_module }
+                .{ .name = "SDL3", .module = sdl_lib.root_module },
+                .{ .name = "c", .module = translator.mod },
             },
         }),
     });
