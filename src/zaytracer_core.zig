@@ -1,12 +1,96 @@
 const std = @import("std");
+const testing = std.testing;
 const main = @import("main.zig");
 const assert = std.debug.assert;
+
+const Vec3 = struct {
+    val: @Vector(3, f32),
+
+    fn from_xyz(x: f32, y: f32, z: f32) Vec3 {
+        return .{ .val = .{x, y, z}};
+    }
+
+    fn add(self: Vec3, b: Vec3) Vec3 {
+        return .{ .val = self.val + b.val };
+    }
+
+    fn sub(self: Vec3, b: Vec3) Vec3 {
+        return .{ .val = self.val - b.val };
+    }
+
+    fn mul(self: Vec3, b: f32) Vec3 {
+        return .{ .val = self.val * @as(@Vector(3, f32), @splat(b)) };
+    }
+
+    fn dot(self: Vec3, b: Vec3) f32 {
+        return @reduce(.Add, self.val * b.val);
+    }
+
+    fn cross(self: Vec3, b_vec3: Vec3) Vec3 {
+        const a = self.val;
+        const b = b_vec3.val;
+        const x = 0; const y = 1; const z = 2;
+        return .{ .val = .{
+            a[y]*b[z]-a[z]*b[y],
+            a[z]*b[x]-a[x]*b[z],
+            a[x]*b[y]-a[y]*b[x]
+        } };
+    }
+
+    fn normalize(self: Vec3) Vec3 {
+        const magn = @sqrt(self.val[0]*self.val[0] +
+                           self.val[1]*self.val[1] +
+                           self.val[2]*self.val[2]);
+
+        return .{ .val = self.val / @as(@Vector(3, f32), @splat(magn)) };
+    }
+};
+
+const Mat33 = struct {
+    val: @Vector(9, f32),
+    
+    fn det(self: Mat33) f32 {
+        const v = self.val;
+        const a = v[0]; const b = v[1]; const c = v[2];
+        const d = v[3]; const e = v[4]; const f = v[5];
+        const g = v[6]; const h = v[7]; const i = v[8];
+        
+        return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
+    }
+
+    // Calculates determinant of `self`, with column at column index (0-indexed)
+    // `col_i` replaced with `col`.
+    fn det_with_col_replaced(self: Mat33, col: Vec3, comptime col_i: u32) f32 {
+        var replaced = self;
+
+        if (!(col_i >= 0 and col_i <= 2)) 
+        {
+            @compileError("col_i must be between 0 and 2 for this 3x3 matrix");
+        }
+
+        replaced.val[0 + col_i] = col.val[0];
+        replaced.val[3 + col_i] = col.val[1];
+        replaced.val[6 + col_i] = col.val[2];
+
+        return replaced.det();
+    }
+
+    fn from_col_vecs(v0: Vec3, v1: Vec3, v2: Vec3) Mat33 {
+        return .{ 
+            .val = .{
+                v0.val[0], v1.val[0], v2.val[0],
+                v0.val[1], v1.val[1], v2.val[1],
+                v0.val[2], v1.val[2], v2.val[2],
+            }
+        };
+    }
+};
 
 const Rgbf32 = struct {
     val: @Vector(3, f32),
 
-    fn color_f32_to_255(val: f32) u32 {
-        return @as(u32, @as(u8, @intFromFloat(std.math.clamp(val, 0.0, 1.0) * 255.0 + 0.5)));
+    fn color_f32_to_255(color_f32: f32) u32 {
+        return @as(u32, @as(u8, @intFromFloat(std.math.clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5)));
     }
 
     fn to_argb8888(self: Rgbf32, a: f32) u32 {
@@ -27,14 +111,185 @@ const Geo = union(GeoTag) {
     sphere: Sphere,
 };
 
+const Intersection = struct {
+    p: Vec3, // Point of intersection
+    n: Vec3, // Normalized normal vector of intersection surface
+};
+ 
 const Triangle = struct {
-    verts: [3]@Vector(3, f32), // typical notation in math is (A, B, C)
-    color: [3]@Vector(3, f32),
-    n: @Vector(3, f32), // nhat is normalized normal vector
+    // Vertices. typical notation in math is (A, B, C)
+    v: [3]Vec3 = @splat(Vec3.from_xyz(0,0,0)), 
+    // Per-vertex color
+    color: [3]@Vector(3, f32) = @splat(@splat(0)), 
+    // TODO: derive normal direction from winding order?
+    // n: Vec3, // n^\hat is normalized normal vector 
+
+    // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
+    // `O`: Origin point
+    // `D`: Direction vector
+    fn intersect(self: Triangle, O: Vec3, D: Vec3) ?Intersection {
+        const v1 = self.v[0]; const v2 = self.v[1]; const v3 = self.v[2];
+
+        // **Obtain normal vector of triangle**
+        // TODO: use stored n instead of calculating on the fly
+        const n = (v2.sub(v1)).cross(v3.sub(v1));
+
+        // **Check if the ray is parallel to the triangle**
+        // when ray direction vector (D) is parallel to plane (i.e. D.dot(n) == 0)
+        // ray does not intersect with plane at all
+        const EPSILON = 1e-6;
+        if (@abs(D.dot(n)) < EPSILON) {
+            return null;
+        }
+
+        // **Check if the ray-plane intersection lies outside of the triangle**
+        // Find intersection point on triangle in barycentric coordinates
+        //      P = w*v1 + u*v2 + v*v3;
+        // P is a convex combination of the triangle's vertices, meaning that
+        // the coefficients w, u, v, must sum to 1. Because of this, we can
+        // replace w with 1 - u - v.
+        //      P = (1 - u - v)v1 + u*v2 + v*v3
+        //
+        // This can be massaged into a system of linear equations:
+        //      O - v1 = -t*D + u*(v2 - v1) + v*(v3 - v1);
+        // Keep in mind -D, v1, v2, v3, are 3-entry vectors, so we can write
+        // this system in matrix-vector multiplication form. 
+        //
+        // [ -D_x  (v2-v1)_x  (v3-v1)_x ][ t ]   [ O_x - v1_x ]
+        // [ -D_y  (v2-v1)_y  (v3-v1)_y ][ u ] = [ O_y - v1_y ]
+        // [ -D_z  (v2-v1)_z  (v3-v1)_z ][ v ]   [ O_z - v1_z ]
+        //
+        // https://en.wikipedia.org/wiki/Cramer%27s_rule 
+        // Cramer's rule is an explicit formula for the solution of a system of 
+        // linear equations with as many equations as unknown, valid whenever
+        // the system has a unique solution.
+        // 
+        // Cramer's rule:
+        // Consider a typical system of n linear equations for n unknowns,
+        // represented in typical matrix multiplication form:
+        //      Ax = b
+        // x_i is the column vector of the solutions
+        //      x_i = det(A_i) / det(A)
+        // where A_i is the matrix formed by replacing the i-th column of A by
+        // the column vector b
+
+        const A = Mat33.from_col_vecs(D.mul(-1), v2.sub(v1), v3.sub(v1));
+        const b = O.sub(v1);
+
+        // t=x_1, u=x_2, v=x_3
+        const t = A.det_with_col_replaced(b, 0) / A.det();
+        const u = A.det_with_col_replaced(b, 1) / A.det();
+        const v = A.det_with_col_replaced(b, 2) / A.det();
+
+        // Return null if intersection of line with triangle is not inside triangle
+        if (u + v > 1) {
+            return null;
+        }
+
+        // Return null if intersection of line with triangle is *behind* the direction vector
+        if (t < 0) {
+            return null;
+        }
+
+        // Recover w 
+        const w = 1 - u - v;
+        
+        // Obtain intersection point, from the definition of barycentric coordinates
+        const P = v1.mul(w).add(v2.mul(u)).add(v3.mul(v));
+
+        return Intersection {
+            .p = P,
+            .n = n.normalize()
+        };
+    }
+
+    const TriangleTestHelpers = struct {
+        const EPSILON: f32 = 1e-6;
+        fn expect_intersect(tri: Triangle, o: Vec3, d: Vec3, intersect_pos: @Vector(3, f32)) !void {
+            const maybe_ti = tri.intersect(o, d);
+            try testing.expect(maybe_ti != null);
+            if (maybe_ti) |ti| {
+                inline for (0..3) |i| { 
+                    try testing.expectApproxEqAbs(
+                        ti.p.val[i],
+                        intersect_pos[i],
+                        EPSILON);
+                }
+            }
+        }
+        fn expect_no_intersect(tri: Triangle, o: Vec3, d: Vec3) !void {
+            const maybe_ti = tri.intersect(o, d);
+            if (maybe_ti) |ti| {
+                std.debug.print("Intersection point at [{} {} {}]", .{ti.p.val[0], ti.p.val[1], ti.p.val[2]});
+            }
+            try testing.expect(maybe_ti == null);
+        }
+    };
+
+    test "intersection 1" {
+        const ray_pos = Vec3.from_xyz(0, 0, 0);
+        const ray_dir = Vec3.from_xyz(0, 0, 1);
+
+        const tri: Triangle = .{
+            .v = .{
+                Vec3.from_xyz(-1, -1,  1),
+                Vec3.from_xyz( 1, -1,  1),
+                Vec3.from_xyz( 0,  1,  1)
+            }
+        };
+
+        try TriangleTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{0, 0, 1});
+    }
+
+    test "intersection 2" {
+        const ray_pos = Vec3.from_xyz(5, 0, 0);
+        const ray_dir = Vec3.from_xyz(0, 0, 1);
+
+        const tri: Triangle = .{
+            .v = .{
+                Vec3.from_xyz(-10, -1,  1),
+                Vec3.from_xyz( 10, -1,  1),
+                Vec3.from_xyz( 0,  1,  1)
+            }
+        };
+
+        try TriangleTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{5, 0, 1});
+    }
+
+    test "non-intersection 1" {
+        const ray_pos = Vec3.from_xyz(0, 0, 0);
+        const ray_dir = Vec3.from_xyz(0, 1, -1);
+
+        const tri: Triangle = .{
+            .v = .{
+                Vec3.from_xyz(-1, -1,  1),
+                Vec3.from_xyz( 1, -1,  1),
+                Vec3.from_xyz( 0,  1,  1)
+            }
+        };
+
+        try TriangleTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+    }
+
+    test "non-intersection 2" {
+        const ray_pos = Vec3.from_xyz(5, 0, 0);
+        const ray_dir = Vec3.from_xyz(0, 0, 1);
+
+        const tri: Triangle = .{
+            .v = .{
+                Vec3.from_xyz(-10, -1,  1),
+                Vec3.from_xyz( 1, -1,  1),
+                Vec3.from_xyz( 0,  1,  1)
+            }
+        };
+
+        try TriangleTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+    }
+
 };
 
 const Sphere = struct {
-    center: @Vector(3, f32), // typical notation in math is (h, k, j)
+    center: Vec3, // typical notation in math is (h, k, j)
     radius: f32,
 };
 
@@ -81,9 +336,19 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgbf32 {
     return .{ .val = p + @as(@Vector(3, f32), @splat(m)) };
 }
 
+var geo: std.ArrayList(Geo) = undefined;
+
+
+pub fn zaytrace_init() !void {
+    geo = .empty;
+    // geo.append(root.gpa, Sphere{.center = } );
+}
+
 pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
+    
     for (&buf.*, 0..) |*row_pixels, row| {
         // map row to normalized y coordinates
+        //     (Vulkan style, [-1, -1] xy is the top left corner of the screen)
         const y = mapRange(f32, @floatFromInt(row), 0, main.WINDOW_HEIGHT, -1, 1);
         for (row_pixels, 0..) |*px, col| {
             const x = mapRange(f32, @floatFromInt(col), 0, main.WINDOW_WIDTH, -1, 1);
@@ -93,4 +358,9 @@ pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
             px.* = hsv_to_rgb(hue_deg, 1, 1).to_argb8888(1.0);
         }
     }
+}
+
+test {
+    // Make sure compiler looks at tests inside structs too
+    std.testing.refAllDecls(@This());
 }

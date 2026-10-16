@@ -113,7 +113,12 @@ inline fn errify(value: anytype) error{SdlError}!switch (@typeInfo(@TypeOf(value
 
 //#region SDL main callbacks boilerplate
 
-pub fn main() !u8 {
+pub var gpa: std.mem.Allocator = undefined;
+
+pub fn main(init: std.process.Init) !u8 {
+    // This is appropriate for anything that lives as long as the process.
+    gpa = init.arena.allocator();
+
     var empty_argv: [0:null]?[*:0]u8 = .{};
     const status: u8 = @truncate(@as(c_uint, @bitCast(c.SDL_RunApp(empty_argv.len, @ptrCast(&empty_argv), sdlMainC, null))));
     return app_err.load() orelse status;
@@ -177,69 +182,74 @@ const ErrorStore = struct {
 
 //#endregion SDL main callbacks boilerplate
 
-pub fn orig_main(init: std.process.Init) !void {
-    // Prints to stderr, unbuffered, ignoring potential error.
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-
-    // This is appropriate for anything that lives as long as the process.
-    const arena: std.mem.Allocator = init.arena.allocator();
-
-    // Accessing command line arguments:
-    const args = try init.minimal.args.toSlice(arena);
-    for (args) |arg| {
-        std.log.info("arg: {s}", .{arg});
-    }
-
-    // In order to do I/O operations need an `Io` instance.
-    const io = init.io;
-
-    // Stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-    const stdout_writer = &stdout_file_writer.interface;
-
-    try zaytracer.printAnotherMessage(stdout_writer);
-
-    try stdout_writer.flush(); // Don't forget to flush!
+test {
+    // Register zaytracer_core.zig for testing
+    _ = @import("zaytracer_core.zig");
 }
 
-test "simple test" {
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(i32) = .empty;
-    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(gpa, 42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
+// pub fn orig_main(init: std.process.Init) !void {
+    // // Prints to stderr, unbuffered, ignoring potential error.
+    // std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
 
-test "fuzz example" {
-    try std.testing.fuzz({}, testOne, .{});
-}
+    // // This is appropriate for anything that lives as long as the process.
+    // // const arena: std.mem.Allocator = init.arena.allocator();
 
-fn testOne(context: void, smith: *std.testing.Smith) !void {
-    _ = context;
-    // Try command `zig build test --fuzz -Doptimize=ReleaseFast` to see if it manages to fail this test case!
+    // // Accessing command line arguments:
+    // const args = try init.minimal.args.toSlice(arena);
+    // for (args) |arg| {
+    //     std.log.info("arg: {s}", .{arg});
+    // }
 
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(gpa);
-    while (!smith.eos()) switch (smith.value(enum { add_data, dup_data })) {
-        .add_data => {
-            const slice = try list.addManyAsSlice(gpa, smith.value(u4));
-            smith.bytes(slice);
-        },
-        .dup_data => {
-            if (list.items.len == 0) continue;
-            if (list.items.len > std.math.maxInt(u32)) return error.SkipZigTest;
-            const len = smith.valueRangeAtMost(u32, 1, @min(32, list.items.len));
-            const off = smith.valueRangeAtMost(u32, 0, @intCast(list.items.len - len));
-            try list.appendSlice(gpa, list.items[off..][0..len]);
-            try std.testing.expectEqualSlices(
-                u8,
-                list.items[off..][0..len],
-                list.items[list.items.len - len ..],
-            );
-        },
-    };
-}
+    // // In order to do I/O operations need an `Io` instance.
+    // const io = init.io;
+
+    // // Stdout is for the actual output of your application, for example if you
+    // // are implementing gzip, then only the compressed bytes should be sent to
+    // // stdout, not any debugging messages.
+    // var stdout_buffer: [1024]u8 = undefined;
+    // var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    // const stdout_writer = &stdout_file_writer.interface;
+
+    // try zaytracer.printAnotherMessage(stdout_writer);
+
+    // try stdout_writer.flush(); // Don't forget to flush!
+// }
+
+// test "simple test" {
+//     const gpa = std.testing.allocator;
+//     var list: std.ArrayList(i32) = .empty;
+//     defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
+//     try list.append(gpa, 42);
+//     try std.testing.expectEqual(@as(i32, 42), list.pop());
+// }
+
+// test "fuzz example" {
+//     try std.testing.fuzz({}, testOne, .{});
+// }
+
+// fn testOne(context: void, smith: *std.testing.Smith) !void {
+//     _ = context;
+//     // Try command `zig build test --fuzz -Doptimize=ReleaseFast` to see if it manages to fail this test case!
+
+//     const gpa = std.testing.allocator;
+//     var list: std.ArrayList(u8) = .empty;
+//     defer list.deinit(gpa);
+//     while (!smith.eos()) switch (smith.value(enum { add_data, dup_data })) {
+//         .add_data => {
+//             const slice = try list.addManyAsSlice(gpa, smith.value(u4));
+//             smith.bytes(slice);
+//         },
+//         .dup_data => {
+//             if (list.items.len == 0) continue;
+//             if (list.items.len > std.math.maxInt(u32)) return error.SkipZigTest;
+//             const len = smith.valueRangeAtMost(u32, 1, @min(32, list.items.len));
+//             const off = smith.valueRangeAtMost(u32, 0, @intCast(list.items.len - len));
+//             try list.appendSlice(gpa, list.items[off..][0..len]);
+//             try std.testing.expectEqualSlices(
+//                 u8,
+//                 list.items[off..][0..len],
+//                 list.items[list.items.len - len ..],
+//             );
+//         },
+//     };
+// }
