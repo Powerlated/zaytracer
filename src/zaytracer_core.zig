@@ -2,18 +2,42 @@ const std = @import("std");
 const main = @import("main.zig");
 const assert = std.debug.assert;
 
-const Rgb = struct {
-    r: f32,
-    g: f32,
-    b: f32,
+const Rgbf32 = struct {
+    val: @Vector(3, f32),
 
-    fn to_argb8888(self: Rgb, a: f32) u32 {
-        return (@as(u32, @as(u8, @intFromFloat(std.math.clamp(a, 0.0, 1.0) * 255.0 + 0.5))) << 24) |
-            (@as(u32, @as(u8, @intFromFloat(std.math.clamp(self.r, 0.0, 1.0) * 255.0 + 0.5))) << 16) |
-            (@as(u32, @as(u8, @intFromFloat(std.math.clamp(self.g, 0.0, 1.0) * 255.0 + 0.5))) << 8) |
-            (@as(u32, @as(u8, @intFromFloat(std.math.clamp(self.b, 0.0, 1.0) * 255.0 + 0.5))));
+    fn color_f32_to_255(val: f32) u32 {
+        return @as(u32, @as(u8, @intFromFloat(std.math.clamp(val, 0.0, 1.0) * 255.0 + 0.5)));
+    }
+
+    fn to_argb8888(self: Rgbf32, a: f32) u32 {
+        return (color_f32_to_255(a) << 24) |
+            (color_f32_to_255(self.val[0]) << 16) |
+            (color_f32_to_255(self.val[1]) << 8) |
+            (color_f32_to_255(self.val[2]));
     }
 };
+
+const GeoTag = enum(u8) {
+    triangle = 1,
+    sphere = 2,
+};
+
+const Geo = union(GeoTag) {
+    triangle: Triangle,
+    sphere: Sphere,
+};
+
+const Triangle = struct {
+    verts: [3]@Vector(3, f32), // typical notation in math is (A, B, C)
+    color: [3]@Vector(3, f32),
+    n: @Vector(3, f32), // nhat is normalized normal vector
+};
+
+const Sphere = struct {
+    center: @Vector(3, f32), // typical notation in math is (h, k, j)
+    radius: f32,
+};
+
 
 /// Linearly maps a value from a source range to a target range
 fn mapRange(comptime T: type, s: T, a1: T, a2: T, b1: T, b2: T) T {
@@ -23,7 +47,7 @@ fn mapRange(comptime T: type, s: T, a1: T, a2: T, b1: T, b2: T) T {
 /// h: [0, 360)
 /// s: [0, 1]
 /// v: [0, 1]
-fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgb {
+fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgbf32 {
     assert(h >= 0 and h < 360);
     assert(s >= 0 and s <= 1);
     assert(v >= 0 and v <= 1);
@@ -38,23 +62,23 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgb {
     const m = v - c;
 
     // r', g', b'
-    var p: Rgb = undefined;
+    var p: @Vector(3, f32) = undefined;
 
     if (h < 60) {
-        p = .{ .r = c, .g = x, .b = 0 };
+        p = .{ c, x, 0 };
     } else if (h < 120) {
-        p = .{ .r = x, .g = c, .b = 0 };
+        p = .{ x, c, 0 };
     } else if (h < 180) {
-        p = .{ .r = 0, .g = c, .b = x };
+        p = .{ 0, c, x };
     } else if (h < 240) {
-        p = .{ .r = 0, .g = x, .b = c };
+        p = .{ 0, x, c };
     } else if (h < 300) {
-        p = .{ .r = x, .g = 0, .b = c };
+        p = .{ x, 0, c };
     } else if (h < 360) {
-        p = .{ .r = c, .g = 0, .b = x };
+        p = .{ c, 0, x };
     }
 
-    return .{ .r = p.r + m, .g = p.g + m, .b = p.b + m };
+    return .{ .val = p + @as(@Vector(3, f32), @splat(m)) };
 }
 
 pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
