@@ -372,12 +372,12 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgbf32 {
     return .{ .val = p + @as(@Vector(3, f32), @splat(m)) };
 }
 
-var geo: std.ArrayList(Geo) = undefined;
+var geoms: std.ArrayList(Geo) = undefined;
 var jitter_prng: std.Random.DefaultPrng = undefined;
 var dither_prng: std.Random.DefaultPrng = undefined;
 
 pub fn zaytrace_init() !void {
-    geo = .empty;
+    geoms = .empty;
     // geo.append(root.gpa, Sphere{.center = } );
 
     jitter_prng = .init(blk: {
@@ -388,6 +388,21 @@ pub fn zaytrace_init() !void {
     // start from seed 0 always
     dither_prng = .init(blk: {
         break :blk 0;
+    });
+
+    try geoms.append(main.gpa, Geo {
+        .triangle = .{
+            .v = .{
+                Vec3.from_xyz( 0.5, 0.5,  1),
+                Vec3.from_xyz(-0.5, 0.5,  1),
+                Vec3.from_xyz( 0,  -0.5,  1)
+            },
+            .colors = .{
+                .{1, 0, 0},
+                .{0, 1, 0},
+                .{0, 0, 1}
+            }
+        },
     });
 }
 
@@ -495,6 +510,9 @@ fn degToRad(deg: f32) f32 {
     return deg * std.math.pi / 180;
 }
 
+// `norm_x` and `norm_y` are Vulkan-style normalized
+// device coordinates, where the top left of the screen
+// is (-1, -1) and the bottom right is (1, 1).
 fn zaytrace_image_inner(norm_x: f32, norm_y: f32) Rgbf32 {
     // const SCALE_X = main.WINDOW_WIDTH;
     // const SCALE_Y = main.WINDOW_HEIGHT;
@@ -523,29 +541,22 @@ fn zaytrace_image_inner(norm_x: f32, norm_y: f32) Rgbf32 {
         y_dir_unnormalized, 
         1).normalize();
 
-    const tri: Triangle = .{
-        .v = .{
-            Vec3.from_xyz( 0.5, 0.5,  1),
-            Vec3.from_xyz(-0.5, 0.5,  1),
-            Vec3.from_xyz( 0,  -0.5,  1)
-        },
-        .colors = .{
-            .{1, 0, 0},
-            .{0, 1, 0},
-            .{0, 0, 1}
+    for (geoms.items) |geo| {
+        switch (geo) {
+            .triangle => |tri| {
+                if (tri.intersect(ray_pos, ray_dir)) |inter| {
+                    const w = inter.geo.triangle.w;
+                    const v = inter.geo.triangle.v;
+                    const u = inter.geo.triangle.u;
+
+                    const r = w*tri.colors[0][0] + v*tri.colors[1][0] + u*tri.colors[2][0];
+                    const g = w*tri.colors[0][1] + v*tri.colors[1][1] + u*tri.colors[2][1];
+                    const b = w*tri.colors[0][2] + v*tri.colors[1][2] + u*tri.colors[2][2];
+                    
+                    return Rgbf32.from_rgb_f32(r, g, b);
+                }
+            }
         }
-    };
-
-    if (tri.intersect(ray_pos, ray_dir)) |inter| {
-        const w = inter.geo.triangle.w;
-        const v = inter.geo.triangle.v;
-        const u = inter.geo.triangle.u;
-
-        const r = w*tri.colors[0][0] + v*tri.colors[1][0] + u*tri.colors[2][0];
-        const g = w*tri.colors[0][1] + v*tri.colors[1][1] + u*tri.colors[2][1];
-        const b = w*tri.colors[0][2] + v*tri.colors[1][2] + u*tri.colors[2][2];
-        
-        return Rgbf32.from_rgb_f32(r, g, b);
     }
 
     return Rgbf32.from_rgb_f32(0, 0, 0);
