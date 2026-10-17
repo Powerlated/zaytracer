@@ -405,7 +405,7 @@ var accumulator_buf: [main.WINDOW_HEIGHT][main.WINDOW_WIDTH]Rgbf32 =
     @splat(@splat(Rgbf32.from_rgb_f32(0, 0, 0)));
 var accumulate_steps: u32 = 0;
 
-pub const MAX_ACCUMULATE_STEPS = 128;
+pub const MAX_ACCUMULATE_STEPS = 1024;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
