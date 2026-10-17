@@ -103,9 +103,101 @@ const Mat33 = struct {
             }
         };
     }
+
+    fn ident() Mat33 {
+        return .{ .val = .{
+            1, 0, 0,
+            0, 1, 0,
+            0, 0, 1,
+        }};
+    }
+
+    fn mul_mat(self: Mat33, b_mat: Mat33) Mat33 {
+        const a = self.val;
+        const b = b_mat.val; 
+        
+        var mat: Mat33 = undefined;
+        inline for (0..3) |i| {
+            inline for (0..3) |j| {
+                mat.val[i*3 + j] = 
+                    a[i*3 + 0] * b[0 + j] +
+                    a[i*3 + 1] * b[3 + j] +
+                    a[i*3 + 2] * b[6 + j];
+            }
+        }
+
+        return mat;
+    }
+
+    fn mul_vec(self: Mat33, b_vec: Vec3) Vec3 {
+        const a = self.val;
+        const b = b_vec.val;
+        
+        var vec: Vec3 = undefined;
+        inline for (0..3) |j| {
+            vec.val[j] =
+                a[j*3 + 0] * b[0] + 
+                a[j*3 + 1] * b[1] + 
+                a[j*3 + 2] * b[2];
+        }
+
+        return vec;
+    }
+
+    test "identity is identity" {
+        try testing.expect(
+            @reduce(.And, 
+                Vec3.from_xyz(1, 2, 3).val == 
+                Mat33.ident().mul_vec(Vec3.from_xyz(1, 2, 3)).val),
+        );
+    }
+
+    // Rotate about X-axis
+    fn roll(phi: f32) Mat33 {
+        return .{
+            .val = .{
+                1,  0,          0,
+                0,  @cos(phi), -@sin(phi),
+                0,  @sin(phi),  @cos(phi),
+            }
+        };
+    }
+
+    // Rotate about Y-axis
+    fn pitch(theta: f32) Mat33 {
+        return .{
+            .val = .{
+                 @cos(theta), 0,  @sin(theta),
+                 0,           1,  0,
+                -@sin(theta), 0,  @cos(theta),
+            }
+        };
+    }
+
+    // Rotate about Z-axis
+    fn yaw(psi: f32) Mat33 {
+        return .{
+            .val = .{
+                @cos(psi), -@sin(psi), 0,
+                @sin(psi),  @cos(psi), 0,
+                0,          0,         1,
+            }
+        };
+    }
+
+    fn rotation(pitch_theta: f32, yaw_psi: f32, roll_phi: f32) Mat33 {
+        return Mat33.yaw(yaw_psi)
+            .mul_mat(Mat33.pitch(pitch_theta))
+            .mul_mat(Mat33.roll(roll_phi));
+    }
 };
 
 const Rgbf32 = Vec3;
+
+const Material = struct {
+    color: Rgbf32,
+    emission: f32,
+};
 
 const GeoTag = enum(u8) {
     triangle = 1,
@@ -393,36 +485,50 @@ fn add_trongle() !void {
     });
 }
 
-fn add_quad() !void {
-    try geoms.append(main.gpa, Geo {
-        .triangle = .{
-            .v = .{
-                Vec3.from_xyz(-1, -1,  1),
-                Vec3.from_xyz(-1,  1,  1),
-                Vec3.from_xyz( 1,  1,  1)
-            },
-            .colors = .{
-                .{1, 0, 0},
-                .{0, 1, 0},
-                .{0, 0, 1}
-            }
+fn add_quad(pos: Vec3, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, color: Rgbf32) !void {
+    var t1 = Triangle {
+        .v = .{
+            Vec3.from_xyz(-1, -1,  0),
+            Vec3.from_xyz(-1,  1,  0),
+            Vec3.from_xyz( 1,  1,  0)
         },
-    });
+        .colors = .{
+            color.val,
+            color.val,
+            color.val
+        }
+    };
 
-    try geoms.append(main.gpa, Geo {
-        .triangle = .{
-            .v = .{
-                Vec3.from_xyz( 1, -1,  1),
-                Vec3.from_xyz(-1, -1,  1),
-                Vec3.from_xyz( 1,  1,  1),
-            },
-            .colors = .{
-                .{0, 0, 1},
-                .{0, 1, 0},
-                .{1, 0, 0},
-            }
+    var t2 = Triangle {
+        .v = .{
+            Vec3.from_xyz( 1, -1,  0),
+            Vec3.from_xyz(-1, -1,  0),
+            Vec3.from_xyz( 1,  1,  0),
         },
-    });
+        .colors = .{
+            color.val,
+            color.val,
+            color.val,
+        }
+    };
+
+    const rot = Mat33.rotation(
+        degToRad(pitch_deg), 
+        degToRad(yaw_deg), 
+        degToRad(roll_deg));
+
+    for (&t1.v) |*v| {
+        v.* = rot.mul_vec(v.*).add(pos);
+    }
+
+    for (&t2.v) |*v| {
+        v.* = rot.mul_vec(v.*).add(pos);
+    }
+
+    const g1: Geo = .{ .triangle = t1 };
+    const g2: Geo = .{ .triangle = t2 };
+
+    try geoms.appendSlice(main.gpa, &[_]Geo{g1, g2});
 }
 
 pub fn zaytrace_init() !void {
@@ -439,7 +545,14 @@ pub fn zaytrace_init() !void {
         break :blk 0;
     });
 
-    try add_quad();
+    // *CORNELL BOX MENTIONED*
+    try add_quad(Vec3.from_xyz( 1, 0, 1.25),  90, 0, 0, Rgbf32.from_rgb_f32(1, 0, 0));
+    try add_quad(Vec3.from_xyz(-1, 0, 1.25), -90, 0, 0, Rgbf32.from_rgb_f32(0, 1, 0));
+
+    try add_quad(Vec3.from_xyz(0,  1, 1.25), 0, 0, 90, Rgbf32.from_rgb_f32(1, 1, 1));
+    try add_quad(Vec3.from_xyz(0, -1, 1.25), 0, 0, -90, Rgbf32.from_rgb_f32(1, 1, 1));
+
+    try add_quad(Vec3.from_xyz(0, 0, 2.25), 0, 90, 0, Rgbf32.from_rgb_f32(1, 1, 1));
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
