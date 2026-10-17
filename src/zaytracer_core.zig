@@ -418,8 +418,8 @@ fn random_jitter() struct {f32, f32} {
     const y_jitter_int = (next >> 32) & 0xFFFFFFFF;
 
     return .{
-        @as(f32, @floatFromInt(x_jitter_int)) / 0x100000000,     
-        @as(f32, @floatFromInt(y_jitter_int)) / 0x100000000,     
+        @as(f32, @floatFromInt(x_jitter_int)) / 0x100000000 - 0.5,     
+        @as(f32, @floatFromInt(y_jitter_int)) / 0x100000000 - 0.5,     
     };
 }
 
