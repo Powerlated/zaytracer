@@ -221,6 +221,7 @@ const IntersectionGeo = union(GeoTag) {
 const Intersection = struct {
     p: Vec3, // Point of intersection
     n: Vec3, // Normalized normal vector of intersection surface
+    t: f32, // t value of intersection
     geo: IntersectionGeo
 };
  
@@ -235,7 +236,7 @@ const Triangle = struct {
     // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
     // `O`: Origin point
     // `D`: Direction vector
-    fn intersect(self: Triangle, O: Vec3, D: Vec3) ?Intersection {
+    fn intersect(self: *const Triangle, O: *const Vec3, D: *const Vec3) ?Intersection {
         const v1 = self.v[0]; const v2 = self.v[1]; const v3 = self.v[2];
 
         // **Obtain normal vector of triangle**
@@ -308,6 +309,7 @@ const Triangle = struct {
         return Intersection {
             .p = P,
             .n = n.normalize(),
+            .t = t,
             .geo = .{
                 .triangle = .{
                     .w=w, .u=u, .v=v
@@ -317,11 +319,12 @@ const Triangle = struct {
     }
 
     const TriangleTestHelpers = struct {
-        const EPSILON: f32 = 1e-6;
-        fn expect_intersect(tri: Triangle, o: Vec3, d: Vec3, intersect_pos: @Vector(3, f32)) !void {
+        const EPSILON: f32 = 1e-5;
+        fn expect_intersect(tri: Triangle, o: Vec3, d: Vec3, intersect_pos: @Vector(3, f32), t: f32) !void {
             const maybe_ti = tri.intersect(o, d);
             try testing.expect(maybe_ti != null);
             if (maybe_ti) |ti| {
+                try testing.expectApproxEqAbs(t, ti.t, EPSILON);
                 inline for (0..3) |i| { 
                     try testing.expectApproxEqAbs(
                         ti.p.val[i],
@@ -351,7 +354,7 @@ const Triangle = struct {
             }
         };
 
-        try TriangleTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{0, 0, 1});
+        try TriangleTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{0, 0, 1}, 1);
     }
 
     test "intersection 2" {
@@ -366,7 +369,31 @@ const Triangle = struct {
             }
         };
 
-        try TriangleTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{5, 0, 1});
+        try TriangleTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{5, 0, 1}, 1);
+    }
+
+    test "intersection 3" {
+        const ray_pos = Vec3.from_xyz(0, 0, 0);
+        const ray_dir = Vec3.from_xyz(1, 0, 1).normalize();
+
+        const tri: Triangle = .{
+            .v = .{
+                Vec3.from_xyz(-10, -100,  1),
+                Vec3.from_xyz( 100, -100,  1),
+                Vec3.from_xyz( 0,  100,  1)
+            }
+        };
+
+        const tri2: Triangle = .{
+            .v = .{
+                Vec3.from_xyz(-10, -100,  2),
+                Vec3.from_xyz( 100, -100,  2),
+                Vec3.from_xyz( 0,  100,  2)
+            }
+        };
+
+        try TriangleTestHelpers.expect_intersect(tri , ray_pos, ray_dir, .{1, 0, 1}, @sqrt(2));
+        try TriangleTestHelpers.expect_intersect(tri2, ray_pos, ray_dir, .{2, 0, 2}, @sqrt(2.0));
     }
 
     test "non-intersection 1" {
@@ -485,12 +512,14 @@ fn add_trongle() !void {
     });
 }
 
-fn add_quad(pos: Vec3, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, color: Rgbf32) !void {
+fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, color: Rgbf32) !void {
+    const half_len = len;
+
     var t1 = Triangle {
         .v = .{
-            Vec3.from_xyz(-1, -1,  0),
-            Vec3.from_xyz(-1,  1,  0),
-            Vec3.from_xyz( 1,  1,  0)
+            Vec3.from_xyz(-half_len/2, -half_len/2,  0),
+            Vec3.from_xyz(-half_len/2,  half_len/2,  0),
+            Vec3.from_xyz( half_len/2,  half_len/2,  0)
         },
         .colors = .{
             color.val,
@@ -501,9 +530,9 @@ fn add_quad(pos: Vec3, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, color: Rgbf3
 
     var t2 = Triangle {
         .v = .{
-            Vec3.from_xyz( 1, -1,  0),
-            Vec3.from_xyz(-1, -1,  0),
-            Vec3.from_xyz( 1,  1,  0),
+            Vec3.from_xyz( half_len/2, -half_len/2,  0),
+            Vec3.from_xyz(-half_len/2, -half_len/2,  0),
+            Vec3.from_xyz( half_len/2,  half_len/2,  0),
         },
         .colors = .{
             color.val,
@@ -546,13 +575,15 @@ pub fn zaytrace_init() !void {
     });
 
     // *CORNELL BOX MENTIONED*
-    try add_quad(Vec3.from_xyz( 1, 0, 1.25),  90, 0, 0, Rgbf32.from_rgb_f32(1, 0, 0));
-    try add_quad(Vec3.from_xyz(-1, 0, 1.25), -90, 0, 0, Rgbf32.from_rgb_f32(0, 1, 0));
+    try add_quad(Vec3.from_xyz( 1, 0, 1.25), 2,  90, 0, 0, Rgbf32.from_rgb_f32(1, 0, 0)); // left wall
+    try add_quad(Vec3.from_xyz(-1, 0, 1.25), 2, -90, 0, 0, Rgbf32.from_rgb_f32(0, 1, 0)); // right wall
 
-    try add_quad(Vec3.from_xyz(0,  1, 1.25), 0, 0, 90, Rgbf32.from_rgb_f32(1, 1, 1));
-    try add_quad(Vec3.from_xyz(0, -1, 1.25), 0, 0, -90, Rgbf32.from_rgb_f32(1, 1, 1));
+    try add_quad(Vec3.from_xyz(0,  1, 1.25), 2, 0, 0,  90, Rgbf32.from_rgb_f32(1, 1, 1)); // roof
+    try add_quad(Vec3.from_xyz(0, -1, 1.25), 2, 0, 0, -90, Rgbf32.from_rgb_f32(1, 1, 1)); // floor
 
-    try add_quad(Vec3.from_xyz(0, 0, 2.25), 0, 90, 0, Rgbf32.from_rgb_f32(1, 1, 1));
+    try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, Rgbf32.from_rgb_f32(0, 0, 1)); // light
+    
+    try add_quad(Vec3.from_xyz(0, 0, 2.25), 2, 0, 90, 0, Rgbf32.from_rgb_f32(1, 1, 1)); // rear wall
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
@@ -693,20 +724,37 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
         y_dir_unnormalized, 
         1).normalize();
 
-    for (geoms.items) |geo| {
-        switch (geo) {
-            .triangle => |tri| {
-                if (tri.intersect(ray_pos, ray_dir)) |inter| {
-                    const w = inter.geo.triangle.w;
-                    const v = inter.geo.triangle.v;
-                    const u = inter.geo.triangle.u;
+    var closest_inter_t: f32 = 1000.0;
+    var maybe_closest_inter: ?Intersection = null;
+    var maybe_closest_inter_geo: ?*Geo = null;
 
-                    const r = w*tri.colors[0][0] + v*tri.colors[1][0] + u*tri.colors[2][0];
-                    const g = w*tri.colors[0][1] + v*tri.colors[1][1] + u*tri.colors[2][1];
-                    const b = w*tri.colors[0][2] + v*tri.colors[1][2] + u*tri.colors[2][2];
-                    
-                    return Rgbf32.from_rgb_f32(r, g, b);
+    for (geoms.items) |*geo| {
+        switch (geo.*) {
+            .triangle => |tri| {
+                if (tri.intersect(&ray_pos, &ray_dir)) |inter| {
+                    if (inter.t < closest_inter_t) {
+                        closest_inter_t = inter.t;
+                        maybe_closest_inter = inter;
+                        maybe_closest_inter_geo = geo;
+                    }
                 }
+            }
+        }
+    }
+
+    if (maybe_closest_inter) |closest_inter| {
+        const tri_inter = closest_inter.geo.triangle;
+        switch (maybe_closest_inter_geo.?.*) {
+            .triangle => |tri| {
+                const w = tri_inter.w;
+                const v = tri_inter.v;
+                const u = tri_inter.u;
+
+                const r = w*tri.colors[0][0] + v*tri.colors[1][0] + u*tri.colors[2][0];
+                const g = w*tri.colors[0][1] + v*tri.colors[1][1] + u*tri.colors[2][1];
+                const b = w*tri.colors[0][2] + v*tri.colors[1][2] + u*tri.colors[2][2];
+                
+                return Rgbf32.from_rgb_f32(r, g, b);
             }
         }
     }
