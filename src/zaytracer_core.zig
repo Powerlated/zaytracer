@@ -373,14 +373,20 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgbf32 {
 }
 
 var geo: std.ArrayList(Geo) = undefined;
-var prng: std.Random.DefaultPrng = undefined;
+var jitter_prng: std.Random.DefaultPrng = undefined;
+var dither_prng: std.Random.DefaultPrng = undefined;
 
 pub fn zaytrace_init() !void {
     geo = .empty;
     // geo.append(root.gpa, Sphere{.center = } );
 
-    prng = .init(blk: {
+    jitter_prng = .init(blk: {
         // start from seed 0 always
+        break :blk 0;
+    });
+
+    // start from seed 0 always
+    dither_prng = .init(blk: {
         break :blk 0;
     });
 }
@@ -411,26 +417,54 @@ pub const MAX_ACCUMULATE_STEPS = 1024;
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
 fn random_jitter() struct {f32, f32} {
     // prng.next() returns integer with uniform distribution in the entire u64 domain
-    const next = prng.next();
+    const next = jitter_prng.next();
 
     // split it in half to get two 32-bit vars where each bit is I.I.D.
     const x_jitter_int = next & 0xFFFFFFFF;
     const y_jitter_int = (next >> 32) & 0xFFFFFFFF;
 
     return .{
-        @as(f32, @floatFromInt(x_jitter_int)) / 0x100000000 - 0.5,     
-        @as(f32, @floatFromInt(y_jitter_int)) / 0x100000000 - 0.5,     
+        @as(f32, @floatFromInt(x_jitter_int)) / 0xFFFFFFFF.0 - 0.5,     
+        @as(f32, @floatFromInt(y_jitter_int)) / 0xFFFFFFFF.0 - 0.5,     
     };
+}
+
+const DITHER_DIVISOR = 256;
+
+fn update_and_dither_output_buffer(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
+    dither_prng.seed(0);
+    
+    for (&buf.*, 0..) |*row_pixels, row| {
+        for (row_pixels, 0..) |*px, col| {
+            // prng.next() returns integer with uniform distribution in the entire u64 domain
+            const next = dither_prng.next();
+
+            // get bottom half to get a 32-bit var where each bit is I.I.D.
+            const int = next & 0xFFFFFFFF;
+            const uniform_rect_dist = 
+                (@as(f32, @floatFromInt(int)) / 0xFFFFFFFF.0 - 0.5) * (1 / DITHER_DIVISOR);
+
+            var dithered = accumulator_buf[row][col].add(.{.val = .{
+                uniform_rect_dist,
+                uniform_rect_dist,
+                uniform_rect_dist,
+            }});
+
+            px.* = dithered.to_argb8888(1);
+        }
+    }
 }
 
 pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) u32 {
     if (accumulate_steps < MAX_ACCUMULATE_STEPS) {
+        // **First, trace one ray per pixel, and then update the accumulator
+        // buffer with the cumulative average.**
         for (&buf.*, 0..) |*row_pixels, row| {
             // map row to normalized y coordinates
             //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
             //      and z points into the screen, away from the viewer.)
 
-            for (row_pixels, 0..) |*px, col| {
+            for (row_pixels, 0..) |_, col| {
                 const jitter = random_jitter();
                 const row_jittered = @as(f32, @floatFromInt(row)) + jitter.@"0";
                 const col_jittered = @as(f32, @floatFromInt(col)) + jitter.@"1";
@@ -445,10 +479,11 @@ pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) u32 {
                 acc_px.* = new_px.add(
                     acc_px.mul(@floatFromInt(accumulate_steps)))
                     .div(@floatFromInt(accumulate_steps + 1));
-
-                px.* = acc_px.*.to_argb8888(1);
             }
         }
+
+        // **Then, update the output buffer while dithering it.**
+        update_and_dither_output_buffer(buf);
 
         accumulate_steps += 1;
     }
