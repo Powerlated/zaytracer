@@ -376,6 +376,55 @@ var geoms: std.ArrayList(Geo) = undefined;
 var jitter_prng: std.Random.DefaultPrng = undefined;
 var dither_prng: std.Random.DefaultPrng = undefined;
 
+fn add_trongle() !void {
+    try geoms.append(main.gpa, Geo {
+        .triangle = .{
+            .v = .{
+                Vec3.from_xyz( 0.5, -0.5,  1),
+                Vec3.from_xyz(-0.5, -0.5,  1),
+                Vec3.from_xyz(   0,  0.5,  1)
+            },
+            .colors = .{
+                .{1, 0, 0},
+                .{0, 1, 0},
+                .{0, 0, 1}
+            }
+        },
+    });
+}
+
+fn add_quad() !void {
+    try geoms.append(main.gpa, Geo {
+        .triangle = .{
+            .v = .{
+                Vec3.from_xyz(-1, -1,  1),
+                Vec3.from_xyz(-1,  1,  1),
+                Vec3.from_xyz( 1,  1,  1)
+            },
+            .colors = .{
+                .{1, 0, 0},
+                .{0, 1, 0},
+                .{0, 0, 1}
+            }
+        },
+    });
+
+    try geoms.append(main.gpa, Geo {
+        .triangle = .{
+            .v = .{
+                Vec3.from_xyz( 1, -1,  1),
+                Vec3.from_xyz(-1, -1,  1),
+                Vec3.from_xyz( 1,  1,  1),
+            },
+            .colors = .{
+                .{0, 0, 1},
+                .{0, 1, 0},
+                .{1, 0, 0},
+            }
+        },
+    });
+}
+
 pub fn zaytrace_init() !void {
     geoms = .empty;
     // geo.append(root.gpa, Sphere{.center = } );
@@ -390,20 +439,7 @@ pub fn zaytrace_init() !void {
         break :blk 0;
     });
 
-    try geoms.append(main.gpa, Geo {
-        .triangle = .{
-            .v = .{
-                Vec3.from_xyz( 0.5, 0.5,  1),
-                Vec3.from_xyz(-0.5, 0.5,  1),
-                Vec3.from_xyz( 0,  -0.5,  1)
-            },
-            .colors = .{
-                .{1, 0, 0},
-                .{0, 1, 0},
-                .{0, 0, 1}
-            }
-        },
-    });
+    try add_quad();
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
@@ -513,7 +549,10 @@ fn degToRad(deg: f32) f32 {
 // `norm_x` and `norm_y` are Vulkan-style normalized
 // device coordinates, where the top left of the screen
 // is (-1, -1) and the bottom right is (1, 1).
-fn zaytrace_image_inner(norm_x: f32, norm_y: f32) Rgbf32 {
+fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
+    // Flip y to make y up
+    const norm_y = flipped_norm_y * -1; 
+
     // const SCALE_X = main.WINDOW_WIDTH;
     // const SCALE_Y = main.WINDOW_HEIGHT;
     const SCALE_X = 1;
