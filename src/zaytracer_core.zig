@@ -194,26 +194,45 @@ const Mat33 = struct {
 
 const Rgbf32 = Vec3;
 
-const Material = struct {
+const MaterialShader = struct {
     color: Rgbf32,
     emission: f32,
+
+    fn new_diffuse(r: f32, g: f32, b: f32) MaterialShader {
+        return .{ .color = .{.val = .{r, g, b}}, .emission = 0 };
+    }
 };
 
-const GeoTag = enum(u8) {
+const GeoTypeTag = enum(u8) {
     triangle = 1,
     // sphere = 2,
 };
 
-const Geo = union(GeoTag) {
+const Geo = union(GeoTypeTag) {
     triangle: Triangle,
     // sphere: Sphere,
+};
+
+const TriangleShaderTypeTag = enum(u8) {
+    perVertex = 1,
+    material = 2,
+};
+
+const TriangleShader = union(TriangleShaderTypeTag) {
+    perVertex: TrianglePerVertexShader,
+    material: MaterialShader,
+};
+
+const TrianglePerVertexShader = struct {
+    // Per-vertex color
+    colors: [3]@Vector(3, f32) = @splat(@splat(0))
 };
 
 const TriangleIntersection = struct {
     w: f32, u: f32, v: f32,
 };
 
-const IntersectionGeo = union(GeoTag) {
+const IntersectionGeo = union(GeoTypeTag) {
     triangle: TriangleIntersection,
     // sphere: null
 };
@@ -228,8 +247,7 @@ const Intersection = struct {
 const Triangle = struct {
     // Vertices. typical notation in math is (A, B, C)
     v: [3]Vec3 = @splat(Vec3.from_xyz(0,0,0)), 
-    // Per-vertex color
-    colors: [3]@Vector(3, f32) = @splat(@splat(0)), 
+    shader: TriangleShader,
     // TODO: derive normal direction from winding order?
     // n: Vec3, // n^\hat is normalized normal vector 
 
@@ -503,16 +521,16 @@ fn add_trongle() !void {
                 Vec3.from_xyz(-0.5, -0.5,  1),
                 Vec3.from_xyz(   0,  0.5,  1)
             },
-            .colors = .{
+            .shader = .{ .perVertex = .{ .colors = .{
                 .{1, 0, 0},
                 .{0, 1, 0},
                 .{0, 0, 1}
-            }
+            }}}
         },
     });
 }
 
-fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, color: Rgbf32) !void {
+fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, shader: TriangleShader) !void {
     const half_len = len;
 
     var t1 = Triangle {
@@ -521,11 +539,7 @@ fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, co
             Vec3.from_xyz(-half_len/2,  half_len/2,  0),
             Vec3.from_xyz( half_len/2,  half_len/2,  0)
         },
-        .colors = .{
-            color.val,
-            color.val,
-            color.val
-        }
+        .shader = shader,
     };
 
     var t2 = Triangle {
@@ -534,11 +548,7 @@ fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, co
             Vec3.from_xyz(-half_len/2, -half_len/2,  0),
             Vec3.from_xyz( half_len/2,  half_len/2,  0),
         },
-        .colors = .{
-            color.val,
-            color.val,
-            color.val,
-        }
+        .shader = shader,
     };
 
     const rot = Mat33.rotation(
@@ -574,16 +584,18 @@ pub fn zaytrace_init() !void {
         break :blk 0;
     });
 
+    try add_trongle();
+
     // *CORNELL BOX MENTIONED*
-    try add_quad(Vec3.from_xyz( 1, 0, 1.25), 2,  90, 0, 0, Rgbf32.from_rgb_f32(1, 0, 0)); // left wall
-    try add_quad(Vec3.from_xyz(-1, 0, 1.25), 2, -90, 0, 0, Rgbf32.from_rgb_f32(0, 1, 0)); // right wall
+    try add_quad(Vec3.from_xyz( 1, 0, 1.25), 2,  90, 0, 0, .{.material = MaterialShader.new_diffuse(1, 0, 0)}); // left wall
+    try add_quad(Vec3.from_xyz(-1, 0, 1.25), 2, -90, 0, 0, .{.material = MaterialShader.new_diffuse(0, 1, 0)}); // right wall
 
-    try add_quad(Vec3.from_xyz(0,  1, 1.25), 2, 0, 0,  90, Rgbf32.from_rgb_f32(1, 1, 1)); // roof
-    try add_quad(Vec3.from_xyz(0, -1, 1.25), 2, 0, 0, -90, Rgbf32.from_rgb_f32(1, 1, 1)); // floor
+    try add_quad(Vec3.from_xyz(0,  1, 1.25), 2, 0, 0,  90, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // roof
+    try add_quad(Vec3.from_xyz(0, -1, 1.25), 2, 0, 0, -90, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // floor
 
-    try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, Rgbf32.from_rgb_f32(0, 0, 1)); // light
+    try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_diffuse(0, 0, 1)}); // light
     
-    try add_quad(Vec3.from_xyz(0, 0, 2.25), 2, 0, 90, 0, Rgbf32.from_rgb_f32(1, 1, 1)); // rear wall
+    try add_quad(Vec3.from_xyz(0, 0, 2.25), 2, 0, 90, 0, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // rear wall
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
@@ -746,15 +758,23 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
         const tri_inter = closest_inter.geo.triangle;
         switch (maybe_closest_inter_geo.?.*) {
             .triangle => |tri| {
-                const w = tri_inter.w;
-                const v = tri_inter.v;
-                const u = tri_inter.u;
+                switch (tri.shader) {
+                    .perVertex => |perVertex| {
+                        const w = tri_inter.w;
+                        const v = tri_inter.v;
+                        const u = tri_inter.u;
 
-                const r = w*tri.colors[0][0] + v*tri.colors[1][0] + u*tri.colors[2][0];
-                const g = w*tri.colors[0][1] + v*tri.colors[1][1] + u*tri.colors[2][1];
-                const b = w*tri.colors[0][2] + v*tri.colors[1][2] + u*tri.colors[2][2];
-                
-                return Rgbf32.from_rgb_f32(r, g, b);
+                        const colors = perVertex.colors;
+                        const r = w*colors[0][0] + v*colors[1][0] + u*colors[2][0];
+                        const g = w*colors[0][1] + v*colors[1][1] + u*colors[2][1];
+                        const b = w*colors[0][2] + v*colors[1][2] + u*colors[2][2];
+                        
+                        return Rgbf32.from_rgb_f32(r, g, b);
+                    },
+                    .material => |material| {
+                        return material.color;
+                    }
+                }
             }
         }
     }
