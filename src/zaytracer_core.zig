@@ -18,8 +18,12 @@ const Vec3 = struct {
         return .{ .val = self.val - b.val };
     }
 
-    fn mul(self: Vec3, b: f32) Vec3 {
+    fn mul_scalar(self: Vec3, b: f32) Vec3 {
         return .{ .val = self.val * @as(@Vector(3, f32), @splat(b)) };
+    }
+
+    fn mul_elementwise(self: Vec3, b: Vec3) Vec3 {
+        return .{ .val = self.val * b.val };
     }
 
     fn div(self: Vec3, b: f32) Vec3 {
@@ -40,6 +44,11 @@ const Vec3 = struct {
             a[x]*b[y]-a[y]*b[x]
         } };
     }
+    
+    fn proj(self: Vec3, v: Vec3) Vec3 {
+        const u = self;
+        return u.mul_scalar(v.dot(u) / u.dot(u));
+    }
 
     fn normalize(self: Vec3) Vec3 {
         const magn = @sqrt(self.val[0]*self.val[0] +
@@ -57,7 +66,7 @@ const Vec3 = struct {
         return @as(u32, @as(u8, @intFromFloat(std.math.clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5)));
     }
 
-    fn to_argb8888(self: Rgbf32, a: f32) u32 {
+    fn to_argb8888(self: *const Rgbf32, a: f32) u32 {
         return (color_f32_to_255(a) << 24) |
             (color_f32_to_255(self.val[0]) << 16) |
             (color_f32_to_255(self.val[1]) << 8) |
@@ -201,6 +210,10 @@ const MaterialShader = struct {
     fn new_diffuse(r: f32, g: f32, b: f32) MaterialShader {
         return .{ .color = .{.val = .{r, g, b}}, .emission = 0 };
     }
+
+    fn new_emissive(r: f32, g: f32, b: f32, emission: f32) MaterialShader {
+        return .{ .color = .{.val = .{r, g, b}}, .emission = emission };
+    }
 };
 
 const GeoTypeTag = enum(u8) {
@@ -254,7 +267,7 @@ const Triangle = struct {
     // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
     // `O`: Origin point
     // `D`: Direction vector
-    fn intersect(self: *const Triangle, O: *const Vec3, D: *const Vec3) ?Intersection {
+    fn intersect(self: *const Triangle, O: Vec3, D: Vec3) ?Intersection {
         const v1 = self.v[0]; const v2 = self.v[1]; const v3 = self.v[2];
 
         // **Obtain normal vector of triangle**
@@ -300,7 +313,7 @@ const Triangle = struct {
         // where A_i is the matrix formed by replacing the i-th column of A by
         // the column vector b
 
-        const A = Mat33.from_col_vecs(D.mul(-1), v2.sub(v1), v3.sub(v1));
+        const A = Mat33.from_col_vecs(D.mul_scalar(-1), v2.sub(v1), v3.sub(v1));
         const b = O.sub(v1);
 
         // t=x_1, u=x_2, v=x_3
@@ -322,7 +335,7 @@ const Triangle = struct {
         }
         
         // Obtain intersection point, from the definition of barycentric coordinates
-        const P = v1.mul(w).add(v2.mul(u)).add(v3.mul(v));
+        const P = v1.mul_scalar(w).add(v2.mul_scalar(u)).add(v3.mul_scalar(v));
 
         return Intersection {
             .p = P,
@@ -593,7 +606,7 @@ pub fn zaytrace_init() !void {
     try add_quad(Vec3.from_xyz(0,  1, 1.25), 2, 0, 0,  90, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // roof
     try add_quad(Vec3.from_xyz(0, -1, 1.25), 2, 0, 0, -90, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // floor
 
-    try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_diffuse(0, 0, 1)}); // light
+    try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_emissive(0, 0, 1, 1)}); // light
     
     try add_quad(Vec3.from_xyz(0, 0, 2.25), 2, 0, 90, 0, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // rear wall
 }
@@ -633,6 +646,21 @@ fn random_jitter() struct {f32, f32} {
     return .{
         @as(f32, @floatFromInt(x_jitter_int)) / 0xFFFFFFFF.0 - 0.5,     
         @as(f32, @floatFromInt(y_jitter_int)) / 0xFFFFFFFF.0 - 0.5,     
+    };
+}
+
+// 2-tuple with each entry being random value in [-1, 1]
+fn random_bounce() struct {f32, f32} {
+    // prng.next() returns integer with uniform distribution in the entire u64 domain
+    const next = jitter_prng.next();
+
+    // split it in half to get two 32-bit vars where each bit is I.I.D.
+    const x_jitter_int = next & 0xFFFFFFFF;
+    const y_jitter_int = (next >> 32) & 0xFFFFFFFF;
+
+    return .{
+        @as(f32, @floatFromInt(x_jitter_int)) / 0x7FFFFFFF.0 - 1,     
+        @as(f32, @floatFromInt(y_jitter_int)) / 0x7FFFFFFF.0 - 1,     
     };
 }
 
@@ -684,7 +712,7 @@ pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) u32 {
                 const acc_px = &accumulator_buf[row][col];
                 const new_px = zaytrace_image_inner(norm_x, norm_y);
                 acc_px.* = new_px.add(
-                    acc_px.mul(@floatFromInt(accumulate_steps)))
+                    acc_px.mul_scalar(@floatFromInt(accumulate_steps)))
                     .div(@floatFromInt(accumulate_steps + 1));
             }
         }
@@ -736,14 +764,24 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
         y_dir_unnormalized, 
         1).normalize();
 
+    return zaytrace_ray(null, ray_pos, ray_dir, 0);
+}
+
+// **Inner raytracing loop** :D
+const MAX_BOUNCES = 64;
+fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) Rgbf32 {
+    if (bounces > MAX_BOUNCES) return Rgbf32.from_rgb_f32(0, 0, 0);
+
     var closest_inter_t: f32 = 1000.0;
     var maybe_closest_inter: ?Intersection = null;
     var maybe_closest_inter_geo: ?*Geo = null;
 
     for (geoms.items) |*geo| {
+        if (geo == origin_geo) continue;
+
         switch (geo.*) {
             .triangle => |tri| {
-                if (tri.intersect(&ray_pos, &ray_dir)) |inter| {
+                if (tri.intersect(ray_pos, ray_dir)) |inter| {
                     if (inter.t < closest_inter_t) {
                         closest_inter_t = inter.t;
                         maybe_closest_inter = inter;
@@ -756,23 +794,63 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
 
     if (maybe_closest_inter) |closest_inter| {
         const tri_inter = closest_inter.geo.triangle;
-        switch (maybe_closest_inter_geo.?.*) {
-            .triangle => |tri| {
-                switch (tri.shader) {
-                    .perVertex => |perVertex| {
-                        const w = tri_inter.w;
-                        const v = tri_inter.v;
-                        const u = tri_inter.u;
+        if (maybe_closest_inter_geo) |geo| {  
+            switch (geo.*) {
+                .triangle => |tri| {
+                    switch (tri.shader) {
+                        .perVertex => |perVertex| {
+                            const w = tri_inter.w;
+                            const v = tri_inter.v;
+                            const u = tri_inter.u;
 
-                        const colors = perVertex.colors;
-                        const r = w*colors[0][0] + v*colors[1][0] + u*colors[2][0];
-                        const g = w*colors[0][1] + v*colors[1][1] + u*colors[2][1];
-                        const b = w*colors[0][2] + v*colors[1][2] + u*colors[2][2];
-                        
-                        return Rgbf32.from_rgb_f32(r, g, b);
-                    },
-                    .material => |material| {
-                        return material.color;
+                            const colors = perVertex.colors;
+                            const r = w*colors[0][0] + v*colors[1][0] + u*colors[2][0];
+                            const g = w*colors[0][1] + v*colors[1][1] + u*colors[2][1];
+                            const b = w*colors[0][2] + v*colors[1][2] + u*colors[2][2];
+                            
+                            return Rgbf32.from_rgb_f32(r, g, b);
+                        },
+                        .material => |material| {
+                            if (material.emission == 1) {
+                                // Do not bounce if fully emissive
+                                return material.color;
+                            } else {
+                                var n = closest_inter.n;
+                                if (n.dot(ray_dir) > 0) {
+                                    // If normal is facing the wrong direction, flip it
+                                    n = n.mul_scalar(-1);
+                                }
+
+                                // **Find orthonormal basis**
+                                // Building an Orthonormal Basis, Revisited - Pixar
+                                // https://jcgt.org/published/0006/01/01/
+                                const x = n.val[0]; const y = n.val[1]; const z = n.val[2]; 
+                                const sign = std.math.sign(z);
+                                const a = -1.0 / (sign + z);
+                                const b = x * y * a;
+                                const b1 = Vec3 {.val = .{1 + sign * x*x * a, sign * b, -sign * x}};
+                                const b2 = Vec3 {.val = .{b, sign + y*y * a, -y}};
+
+                                // now <n, b1, b2> is an orthonormal basis
+                                const random = random_bounce();
+                                const bounce_dir = n.add(b1.mul_scalar(random.@"0")).add(b2.mul_scalar(random.@"1")).normalize();
+
+                                assert(bounce_dir.dot(n) > 0);
+                                return material.color.mul_elementwise(zaytrace_ray(geo, closest_inter.p, bounce_dir, bounces + 1));
+                                // return material.color.mul_scalar(0.5);
+                                
+                                // Point-normal form vector form of plane: 
+                                //      n*(r-r0)=0
+                                //      where n, r, and r0 are vectors
+                                //      * n: normal vector
+                                //      * r: any point on plane
+                                //      * r0: specific point on the plane
+                                // closest_inter.p is intersection point 
+                                // const 
+                                
+                                // return material.color;
+                            }
+                        }
                     }
                 }
             }
