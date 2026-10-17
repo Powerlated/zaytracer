@@ -22,6 +22,10 @@ const Vec3 = struct {
         return .{ .val = self.val * @as(@Vector(3, f32), @splat(b)) };
     }
 
+    fn div(self: Vec3, b: f32) Vec3 {
+        return .{ .val = self.val / @as(@Vector(3, f32), @splat(b)) };
+    }
+
     fn dot(self: Vec3, b: Vec3) f32 {
         return @reduce(.Add, self.val * b.val);
     }
@@ -43,6 +47,21 @@ const Vec3 = struct {
                            self.val[2]*self.val[2]);
 
         return .{ .val = self.val / @as(@Vector(3, f32), @splat(magn)) };
+    }
+
+    fn from_rgb_f32(r: f32, g: f32, b: f32) Rgbf32 {
+        return .{ .val = .{r, g, b} };
+    }
+
+    fn color_f32_to_255(color_f32: f32) u32 {
+        return @as(u32, @as(u8, @intFromFloat(std.math.clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5)));
+    }
+
+    fn to_argb8888(self: Rgbf32, a: f32) u32 {
+        return (color_f32_to_255(a) << 24) |
+            (color_f32_to_255(self.val[0]) << 16) |
+            (color_f32_to_255(self.val[1]) << 8) |
+            (color_f32_to_255(self.val[2]));
     }
 };
 
@@ -86,24 +105,7 @@ const Mat33 = struct {
     }
 };
 
-const Rgbf32 = struct {
-    val: @Vector(3, f32),
-
-    fn from_rgb_f32(r: f32, g: f32, b: f32) Rgbf32 {
-        return .{ .val = .{r, g, b} };
-    }
-
-    fn color_f32_to_255(color_f32: f32) u32 {
-        return @as(u32, @as(u8, @intFromFloat(std.math.clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5)));
-    }
-
-    fn to_argb8888(self: Rgbf32, a: f32) u32 {
-        return (color_f32_to_255(a) << 24) |
-            (color_f32_to_255(self.val[0]) << 16) |
-            (color_f32_to_255(self.val[1]) << 8) |
-            (color_f32_to_255(self.val[2]));
-    }
-};
+const Rgbf32 = Vec3;
 
 const GeoTag = enum(u8) {
     triangle = 1,
@@ -371,11 +373,16 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgbf32 {
 }
 
 var geo: std.ArrayList(Geo) = undefined;
-
+var prng: std.Random.DefaultPrng = undefined;
 
 pub fn zaytrace_init() !void {
     geo = .empty;
     // geo.append(root.gpa, Sphere{.center = } );
+
+    prng = .init(blk: {
+        // start from seed 0 always
+        break :blk 0;
+    });
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
@@ -393,17 +400,60 @@ pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
     }
 }
 
-pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
-    for (&buf.*, 0..) |*row_pixels, row| {
-        // map row to normalized y coordinates
-        //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
-        //      and z points into the screen, away from the viewer.)
-        const norm_y = mapRange(f32, @floatFromInt(row), 0, main.WINDOW_HEIGHT, -1, 1);
-        for (row_pixels, 0..) |*px, col| {
-            const norm_x = mapRange(f32, @floatFromInt(col), 0, main.WINDOW_WIDTH, -1, 1);
-            px.* = zaytrace_image_inner(norm_x, norm_y).to_argb8888(1);
+// accumulator for antialiasing
+var accumulator_buf: [main.WINDOW_HEIGHT][main.WINDOW_WIDTH]Rgbf32 = 
+    @splat(@splat(Rgbf32.from_rgb_f32(0, 0, 0)));
+var accumulate_steps: u32 = 0;
+
+pub const MAX_ACCUMULATE_STEPS = 128;
+
+// 2-tuple with each entry being random value in [-0.5, 0.5]
+// TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
+fn random_jitter() struct {f32, f32} {
+    // prng.next() returns integer with uniform distribution in the entire u64 domain
+    const next = prng.next();
+
+    // split it in half to get two 32-bit vars where each bit is I.I.D.
+    const x_jitter_int = next & 0xFFFFFFFF;
+    const y_jitter_int = (next >> 32) & 0xFFFFFFFF;
+
+    return .{
+        @as(f32, @floatFromInt(x_jitter_int)) / 0x100000000,     
+        @as(f32, @floatFromInt(y_jitter_int)) / 0x100000000,     
+    };
+}
+
+pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) u32 {
+    if (accumulate_steps < MAX_ACCUMULATE_STEPS) {
+        for (&buf.*, 0..) |*row_pixels, row| {
+            // map row to normalized y coordinates
+            //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
+            //      and z points into the screen, away from the viewer.)
+
+            for (row_pixels, 0..) |*px, col| {
+                const jitter = random_jitter();
+                const row_jittered = @as(f32, @floatFromInt(row)) + jitter.@"0";
+                const col_jittered = @as(f32, @floatFromInt(col)) + jitter.@"1";
+                
+                const norm_y = mapRange(f32, row_jittered, 0, main.WINDOW_HEIGHT, -1, 1);
+                const norm_x = mapRange(f32, col_jittered, 0, main.WINDOW_WIDTH, -1, 1);
+
+                // perform antialiasing accumulate
+                // https://en.wikipedia.org/wiki/Moving_average#Cumulative_average
+                const acc_px = &accumulator_buf[row][col];
+                const new_px = zaytrace_image_inner(norm_x, norm_y);
+                acc_px.* = new_px.add(
+                    acc_px.mul(@floatFromInt(accumulate_steps)))
+                    .div(@floatFromInt(accumulate_steps + 1));
+
+                px.* = acc_px.*.to_argb8888(1);
+            }
         }
+
+        accumulate_steps += 1;
     }
+
+    return accumulate_steps;
 }
 
 fn zaytrace_image_inner(norm_x: f32, norm_y: f32) Rgbf32 {

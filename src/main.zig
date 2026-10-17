@@ -34,6 +34,8 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     _ = argv;
     _ = c.SDL_SetAppMetadata("Example Renderer Geometry", "1.0", "com.example.renderer-geometry");
 
+    try zaytracer_core.zaytrace_init();
+
     try errify(c.SDL_Init(c.SDL_INIT_VIDEO));
     try errify(c.SDL_CreateWindowAndRenderer("Brian Jia - Zaytracer", WINDOW_WIDTH, WINDOW_HEIGHT, 0, @ptrCast(&window), @ptrCast(&renderer)));
     _ = c.SDL_SetRenderLogicalPresentation(renderer, WINDOW_WIDTH, WINDOW_HEIGHT, c.SDL_LOGICAL_PRESENTATION_LETTERBOX);
@@ -56,8 +58,12 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
 fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
     _ = appstate;
 
+    const accumulate_step = zaytracer_core.zaytrace_image(@ptrCast(@alignCast(surface.pixels)));
 
-    zaytracer_core.zaytrace_image(@ptrCast(@alignCast(surface.pixels)));
+    var title: [64:0]u8 = undefined;
+    _ = try std.mem.printSentinel(&title, "Brian Jia - Zaytracer [{}/{} steps]", 
+                        .{accumulate_step, zaytracer_core.MAX_ACCUMULATE_STEPS}, 0);
+    try errify(c.SDL_SetWindowTitle(window, &title));
 
     try errify(c.SDL_RenderClear(renderer));
     
