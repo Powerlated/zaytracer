@@ -45,7 +45,7 @@ pub fn build(b: *std.Build) void {
     const sdl_dep = b.dependency("sdl", .{
         .target = target,
         .optimize = optimize,
-        //.preferred_linkage = .static,
+        .preferred_linkage = .dynamic,
         //.strip = null,
         .sanitize_c = .off, // or .full
         //.pic = null,

@@ -491,6 +491,10 @@ pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) u32 {
     return accumulate_steps;
 }
 
+fn degToRad(deg: f32) f32 {
+    return deg * std.math.pi / 180;
+}
+
 fn zaytrace_image_inner(norm_x: f32, norm_y: f32) Rgbf32 {
     // const SCALE_X = main.WINDOW_WIDTH;
     // const SCALE_Y = main.WINDOW_HEIGHT;
@@ -500,8 +504,24 @@ fn zaytrace_image_inner(norm_x: f32, norm_y: f32) Rgbf32 {
     const x = SCALE_X * norm_x;
     const y = SCALE_Y * norm_y;
 
+    // **Perspective Projection**
+    const FOV_HORIZONTAL_RAD: f32 = degToRad(45);
+    const FOV_VERTICAL_RAD: f32 = degToRad(30);
+
+    // Given a projection plane 1 unit ahead of the camera,
+    // how far away from the center of the plane are the 
+    // left/right (x_outer_bound) and top/bottom (y_outer_bound) edges?
+    const x_outer_bound = @tan(FOV_HORIZONTAL_RAD);
+    const y_outer_bound = @tan(FOV_VERTICAL_RAD);
+
+    const x_dir_unnormalized = norm_x * x_outer_bound;
+    const y_dir_unnormalized = norm_y * y_outer_bound;
+
     const ray_pos = Vec3.from_xyz(x, y, 0);
-    const ray_dir = Vec3.from_xyz(0, 0, 1);
+    const ray_dir = Vec3.from_xyz(
+        x_dir_unnormalized,
+        y_dir_unnormalized, 
+        1).normalize();
 
     const tri: Triangle = .{
         .v = .{
