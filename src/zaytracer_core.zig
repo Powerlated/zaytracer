@@ -217,36 +217,36 @@ const MaterialShader = struct {
 };
 
 const GeoTypeTag = enum(u8) {
-    triangle = 1,
+    tri = 1,
     // sphere = 2,
 };
 
 const Geo = union(GeoTypeTag) {
-    triangle: Triangle,
+    tri: Tri,
     // sphere: Sphere,
 };
 
-const TriangleShaderTypeTag = enum(u8) {
+const TriShaderTypeTag = enum(u8) {
     perVertex = 1,
     material = 2,
 };
 
-const TriangleShader = union(TriangleShaderTypeTag) {
-    perVertex: TrianglePerVertexShader,
+const TriShader = union(TriShaderTypeTag) {
+    perVertex: TriPerVertexShader,
     material: MaterialShader,
 };
 
-const TrianglePerVertexShader = struct {
+const TriPerVertexShader = struct {
     // Per-vertex color
     colors: [3]@Vector(3, f32) = @splat(@splat(0))
 };
 
-const TriangleIntersection = struct {
+const TriIntersection = struct {
     w: f32, u: f32, v: f32,
 };
 
 const IntersectionGeo = union(GeoTypeTag) {
-    triangle: TriangleIntersection,
+    tri: TriIntersection,
     // sphere: null
 };
 
@@ -257,17 +257,17 @@ const Intersection = struct {
     geo: IntersectionGeo
 };
  
-const Triangle = struct {
+const Tri = struct {
     // Vertices. typical notation in math is (A, B, C)
     v: [3]Vec3 = @splat(Vec3.from_xyz(0,0,0)), 
-    shader: TriangleShader,
+    shader: TriShader,
     // TODO: derive normal direction from winding order?
     // n: Vec3, // n^\hat is normalized normal vector 
 
     // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
     // `O`: Origin point
     // `D`: Direction vector
-    fn intersect(self: *const Triangle, O: Vec3, D: Vec3) ?Intersection {
+    fn intersect(self: *const Tri, O: Vec3, D: Vec3) ?Intersection {
         const v1 = self.v[0]; const v2 = self.v[1]; const v3 = self.v[2];
 
         // **Obtain normal vector of triangle**
@@ -342,16 +342,16 @@ const Triangle = struct {
             .n = n.normalize(),
             .t = t,
             .geo = .{
-                .triangle = .{
+                .tri = .{
                     .w=w, .u=u, .v=v
                 }
             }
         };
     }
 
-    const TriangleTestHelpers = struct {
+    const TriTestHelpers = struct {
         const EPSILON: f32 = 1e-5;
-        fn expect_intersect(tri: Triangle, o: Vec3, d: Vec3, intersect_pos: @Vector(3, f32), t: f32) !void {
+        fn expect_intersect(tri: Tri, o: Vec3, d: Vec3, intersect_pos: @Vector(3, f32), t: f32) !void {
             const maybe_ti = tri.intersect(o, d);
             try testing.expect(maybe_ti != null);
             if (maybe_ti) |ti| {
@@ -364,7 +364,7 @@ const Triangle = struct {
                 }
             }
         }
-        fn expect_no_intersect(tri: Triangle, o: Vec3, d: Vec3) !void {
+        fn expect_no_intersect(tri: Tri, o: Vec3, d: Vec3) !void {
             const maybe_ti = tri.intersect(o, d);
             if (maybe_ti) |ti| {
                 std.debug.print("Intersection point at [{} {} {}]", .{ti.p.val[0], ti.p.val[1], ti.p.val[2]});
@@ -377,7 +377,7 @@ const Triangle = struct {
         const ray_pos = Vec3.from_xyz(0, 0, 0);
         const ray_dir = Vec3.from_xyz(0, 0, 1);
 
-        const tri: Triangle = .{
+        const tri: Tri = .{
             .v = .{
                 Vec3.from_xyz(-1, -1,  1),
                 Vec3.from_xyz( 1, -1,  1),
@@ -385,14 +385,14 @@ const Triangle = struct {
             }
         };
 
-        try TriangleTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{0, 0, 1}, 1);
+        try TriTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{0, 0, 1}, 1);
     }
 
     test "intersection 2" {
         const ray_pos = Vec3.from_xyz(5, 0, 0);
         const ray_dir = Vec3.from_xyz(0, 0, 1);
 
-        const tri: Triangle = .{
+        const tri: Tri = .{
             .v = .{
                 Vec3.from_xyz(-10, -1,  1),
                 Vec3.from_xyz( 10, -1,  1),
@@ -400,14 +400,14 @@ const Triangle = struct {
             }
         };
 
-        try TriangleTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{5, 0, 1}, 1);
+        try TriTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{5, 0, 1}, 1);
     }
 
     test "intersection 3" {
         const ray_pos = Vec3.from_xyz(0, 0, 0);
         const ray_dir = Vec3.from_xyz(1, 0, 1).normalize();
 
-        const tri: Triangle = .{
+        const tri: Tri = .{
             .v = .{
                 Vec3.from_xyz(-10, -100,  1),
                 Vec3.from_xyz( 100, -100,  1),
@@ -415,7 +415,7 @@ const Triangle = struct {
             }
         };
 
-        const tri2: Triangle = .{
+        const tri2: Tri = .{
             .v = .{
                 Vec3.from_xyz(-10, -100,  2),
                 Vec3.from_xyz( 100, -100,  2),
@@ -423,15 +423,15 @@ const Triangle = struct {
             }
         };
 
-        try TriangleTestHelpers.expect_intersect(tri , ray_pos, ray_dir, .{1, 0, 1}, @sqrt(2));
-        try TriangleTestHelpers.expect_intersect(tri2, ray_pos, ray_dir, .{2, 0, 2}, @sqrt(2.0));
+        try TriTestHelpers.expect_intersect(tri , ray_pos, ray_dir, .{1, 0, 1}, @sqrt(2));
+        try TriTestHelpers.expect_intersect(tri2, ray_pos, ray_dir, .{2, 0, 2}, @sqrt(2.0));
     }
 
     test "non-intersection 1" {
         const ray_pos = Vec3.from_xyz(0, 0, 0);
         const ray_dir = Vec3.from_xyz(0, 1, -1);
 
-        const tri: Triangle = .{
+        const tri: Tri = .{
             .v = .{
                 Vec3.from_xyz(-1, -1,  1),
                 Vec3.from_xyz( 1, -1,  1),
@@ -439,14 +439,14 @@ const Triangle = struct {
             }
         };
 
-        try TriangleTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+        try TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
     }
 
     test "non-intersection 2" {
         const ray_pos = Vec3.from_xyz(5, 0, 0);
         const ray_dir = Vec3.from_xyz(0, 0, 1);
 
-        const tri: Triangle = .{
+        const tri: Tri = .{
             .v = .{
                 Vec3.from_xyz(-10, -1,  1),
                 Vec3.from_xyz( 1, -1,  1),
@@ -454,14 +454,14 @@ const Triangle = struct {
             }
         };
 
-        try TriangleTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+        try TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
     }
 
     test "non-intersection 3" {
         const ray_pos = Vec3.from_xyz(1, -1, 0);
         const ray_dir = Vec3.from_xyz(0, 0, 1);
 
-        const tri: Triangle = .{
+        const tri: Tri = .{
             .v = .{
                 Vec3.from_xyz( 0.5, 0.5,  1),
                 Vec3.from_xyz(-0.5, 0.5,  1),
@@ -469,7 +469,7 @@ const Triangle = struct {
             }
         };
 
-        try TriangleTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+        try TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
     }
 
 };
@@ -528,7 +528,7 @@ var dither_prng: std.Random.DefaultPrng = undefined;
 
 fn add_trongle() !void {
     try geoms.append(main.gpa, Geo {
-        .triangle = .{
+        .tri = .{
             .v = .{
                 Vec3.from_xyz( 0.5, -0.5,  1),
                 Vec3.from_xyz(-0.5, -0.5,  1),
@@ -543,10 +543,10 @@ fn add_trongle() !void {
     });
 }
 
-fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, shader: TriangleShader) !void {
+fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, shader: TriShader) !void {
     const half_len = len;
 
-    var t1 = Triangle {
+    var t1 = Tri {
         .v = .{
             Vec3.from_xyz(-half_len/2, -half_len/2,  0),
             Vec3.from_xyz(-half_len/2,  half_len/2,  0),
@@ -555,7 +555,7 @@ fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, sh
         .shader = shader,
     };
 
-    var t2 = Triangle {
+    var t2 = Tri {
         .v = .{
             Vec3.from_xyz( half_len/2, -half_len/2,  0),
             Vec3.from_xyz(-half_len/2, -half_len/2,  0),
@@ -577,8 +577,8 @@ fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, sh
         v.* = rot.mul_vec(v.*).add(pos);
     }
 
-    const g1: Geo = .{ .triangle = t1 };
-    const g2: Geo = .{ .triangle = t2 };
+    const g1: Geo = .{ .tri = t1 };
+    const g2: Geo = .{ .tri = t2 };
 
     try geoms.appendSlice(main.gpa, &[_]Geo{g1, g2});
 }
@@ -780,7 +780,7 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
         if (geo == origin_geo) continue;
 
         switch (geo.*) {
-            .triangle => |tri| {
+            .tri => |tri| {
                 if (tri.intersect(ray_pos, ray_dir)) |inter| {
                     if (inter.t < closest_inter_t) {
                         closest_inter_t = inter.t;
@@ -793,10 +793,10 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
     }
 
     if (maybe_closest_inter) |closest_inter| {
-        const tri_inter = closest_inter.geo.triangle;
+        const tri_inter = closest_inter.geo.tri;
         if (maybe_closest_inter_geo) |geo| {  
             switch (geo.*) {
-                .triangle => |tri| {
+                .tri => |tri| {
                     switch (tri.shader) {
                         .perVertex => |perVertex| {
                             // currently this is emissive
