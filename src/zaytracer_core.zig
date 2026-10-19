@@ -606,7 +606,7 @@ pub fn zaytrace_init() !void {
     try add_quad(Vec3.from_xyz(0,  1, 1.25), 2, 0, 0,  90, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // roof
     try add_quad(Vec3.from_xyz(0, -1, 1.25), 2, 0, 0, -90, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // floor
 
-    try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_emissive(0, 0, 1, 1)}); // light
+    // try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_emissive(0, 0, 1, 1)}); // light
     
     try add_quad(Vec3.from_xyz(0, 0, 2.25), 2, 0, 90, 0, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // rear wall
 }
@@ -768,7 +768,7 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
 }
 
 // **Inner raytracing loop** :D
-const MAX_BOUNCES = 64;
+const MAX_BOUNCES = 4;
 fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) Rgbf32 {
     if (bounces > MAX_BOUNCES) return Rgbf32.from_rgb_f32(0, 0, 0);
 
@@ -799,6 +799,7 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                 .triangle => |tri| {
                     switch (tri.shader) {
                         .perVertex => |perVertex| {
+                            // currently this is emissive
                             const w = tri_inter.w;
                             const v = tri_inter.v;
                             const u = tri_inter.u;
@@ -808,7 +809,12 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                             const g = w*colors[0][1] + v*colors[1][1] + u*colors[2][1];
                             const b = w*colors[0][2] + v*colors[1][2] + u*colors[2][2];
                             
-                            return Rgbf32.from_rgb_f32(r, g, b);
+                            // make it much brighter if it's indirect bounce
+                            if (bounces > 0) {
+                                return Rgbf32.from_rgb_f32(r, g, b).mul_scalar(10);
+                            } else {
+                                return Rgbf32.from_rgb_f32(r, g, b);
+                            }
                         },
                         .material => |material| {
                             if (material.emission == 1) {
@@ -832,7 +838,13 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                                 const b2 = Vec3 {.val = .{b, sign + y*y * a, -y}};
 
                                 // now <n, b1, b2> is an orthonormal basis
-                                const random = random_bounce();
+                                // get a random 2D vector that is within the unit circle
+                                // TODO there are definitely better distributions than this.
+                                // TODO I just pulled this one out of my intuition
+                                var random = random_bounce();
+                                while (@sqrt(random.@"0"*random.@"0" + random.@"1"*random.@"1") > 1) {
+                                    random = random_bounce();
+                                }
                                 const bounce_dir = n.add(b1.mul_scalar(random.@"0")).add(b2.mul_scalar(random.@"1")).normalize();
 
                                 assert(bounce_dir.dot(n) > 0);
