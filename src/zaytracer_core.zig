@@ -7,7 +7,7 @@ const Vec3 = struct {
     val: @Vector(3, f32),
 
     fn from_xyz(x: f32, y: f32, z: f32) Vec3 {
-        return .{ .val = .{x, y, z}};
+        return .{ .val = .{ x, y, z } };
     }
 
     fn add(self: Vec3, b: Vec3) Vec3 {
@@ -37,29 +37,27 @@ const Vec3 = struct {
     fn cross(self: Vec3, b_vec3: Vec3) Vec3 {
         const a = self.val;
         const b = b_vec3.val;
-        const x = 0; const y = 1; const z = 2;
-        return .{ .val = .{
-            a[y]*b[z]-a[z]*b[y],
-            a[z]*b[x]-a[x]*b[z],
-            a[x]*b[y]-a[y]*b[x]
-        } };
+        const x = 0;
+        const y = 1;
+        const z = 2;
+        return .{ .val = .{ a[y] * b[z] - a[z] * b[y], a[z] * b[x] - a[x] * b[z], a[x] * b[y] - a[y] * b[x] } };
     }
-    
+
     fn proj(self: Vec3, v: Vec3) Vec3 {
         const u = self;
         return u.mul_scalar(v.dot(u) / u.dot(u));
     }
 
     fn normalize(self: Vec3) Vec3 {
-        const magn = @sqrt(self.val[0]*self.val[0] +
-                           self.val[1]*self.val[1] +
-                           self.val[2]*self.val[2]);
+        const magn = @sqrt(self.val[0] * self.val[0] +
+            self.val[1] * self.val[1] +
+            self.val[2] * self.val[2]);
 
         return .{ .val = self.val / @as(@Vector(3, f32), @splat(magn)) };
     }
 
     fn from_rgb_f32(r: f32, g: f32, b: f32) Rgbf32 {
-        return .{ .val = .{r, g, b} };
+        return .{ .val = .{ r, g, b } };
     }
 
     fn color_f32_to_255(color_f32: f32) u32 {
@@ -76,14 +74,20 @@ const Vec3 = struct {
 
 const Mat33 = struct {
     val: @Vector(9, f32),
-    
+
     fn det(self: Mat33) f32 {
         const v = self.val;
-        const a = v[0]; const b = v[1]; const c = v[2];
-        const d = v[3]; const e = v[4]; const f = v[5];
-        const g = v[6]; const h = v[7]; const i = v[8];
-        
-        return (a*e*i + b*f*g + c*d*h) - (c*e*g + a*f*h + b*d*i);
+        const a = v[0];
+        const b = v[1];
+        const c = v[2];
+        const d = v[3];
+        const e = v[4];
+        const f = v[5];
+        const g = v[6];
+        const h = v[7];
+        const i = v[8];
+
+        return (a * e * i + b * f * g + c * d * h) - (c * e * g + a * f * h + b * d * i);
     }
 
     // Calculates determinant of `self`, with column at column index (0-indexed)
@@ -91,8 +95,7 @@ const Mat33 = struct {
     fn det_with_col_replaced(self: Mat33, col: Vec3, comptime col_i: u32) f32 {
         var replaced = self;
 
-        if (!(col_i >= 0 and col_i <= 2)) 
-        {
+        if (!(col_i >= 0 and col_i <= 2)) {
             @compileError("col_i must be between 0 and 2 for this 3x3 matrix");
         }
 
@@ -104,13 +107,11 @@ const Mat33 = struct {
     }
 
     fn from_col_vecs(v0: Vec3, v1: Vec3, v2: Vec3) Mat33 {
-        return .{ 
-            .val = .{
-                v0.val[0], v1.val[0], v2.val[0],
-                v0.val[1], v1.val[1], v2.val[1],
-                v0.val[2], v1.val[2], v2.val[2],
-            }
-        };
+        return .{ .val = .{
+            v0.val[0], v1.val[0], v2.val[0],
+            v0.val[1], v1.val[1], v2.val[1],
+            v0.val[2], v1.val[2], v2.val[2],
+        } };
     }
 
     fn ident() Mat33 {
@@ -118,20 +119,20 @@ const Mat33 = struct {
             1, 0, 0,
             0, 1, 0,
             0, 0, 1,
-        }};
+        } };
     }
 
     fn mul_mat(self: Mat33, b_mat: Mat33) Mat33 {
         const a = self.val;
-        const b = b_mat.val; 
-        
+        const b = b_mat.val;
+
         var mat: Mat33 = undefined;
         inline for (0..3) |i| {
             inline for (0..3) |j| {
-                mat.val[i*3 + j] = 
-                    a[i*3 + 0] * b[0 + j] +
-                    a[i*3 + 1] * b[3 + j] +
-                    a[i*3 + 2] * b[6 + j];
+                mat.val[i * 3 + j] =
+                    a[i * 3 + 0] * b[0 + j] +
+                    a[i * 3 + 1] * b[3 + j] +
+                    a[i * 3 + 2] * b[6 + j];
             }
         }
 
@@ -141,13 +142,13 @@ const Mat33 = struct {
     fn mul_vec(self: Mat33, b_vec: Vec3) Vec3 {
         const a = self.val;
         const b = b_vec.val;
-        
+
         var vec: Vec3 = undefined;
         inline for (0..3) |j| {
             vec.val[j] =
-                a[j*3 + 0] * b[0] + 
-                a[j*3 + 1] * b[1] + 
-                a[j*3 + 2] * b[2];
+                a[j * 3 + 0] * b[0] +
+                a[j * 3 + 1] * b[1] +
+                a[j * 3 + 2] * b[2];
         }
 
         return vec;
@@ -155,43 +156,36 @@ const Mat33 = struct {
 
     test "identity is identity" {
         try testing.expect(
-            @reduce(.And, 
-                Vec3.from_xyz(1, 2, 3).val == 
+            @reduce(.And, Vec3.from_xyz(1, 2, 3).val ==
                 Mat33.ident().mul_vec(Vec3.from_xyz(1, 2, 3)).val),
         );
     }
 
     // Rotate about X-axis
     fn roll(phi: f32) Mat33 {
-        return .{
-            .val = .{
-                1,  0,          0,
-                0,  @cos(phi), -@sin(phi),
-                0,  @sin(phi),  @cos(phi),
-            }
-        };
+        return .{ .val = .{
+            1, 0,         0,
+            0, @cos(phi), -@sin(phi),
+            0, @sin(phi), @cos(phi),
+        } };
     }
 
     // Rotate about Y-axis
     fn pitch(theta: f32) Mat33 {
-        return .{
-            .val = .{
-                 @cos(theta), 0,  @sin(theta),
-                 0,           1,  0,
-                -@sin(theta), 0,  @cos(theta),
-            }
-        };
+        return .{ .val = .{
+            @cos(theta),  0, @sin(theta),
+            0,            1, 0,
+            -@sin(theta), 0, @cos(theta),
+        } };
     }
 
     // Rotate about Z-axis
     fn yaw(psi: f32) Mat33 {
-        return .{
-            .val = .{
-                @cos(psi), -@sin(psi), 0,
-                @sin(psi),  @cos(psi), 0,
-                0,          0,         1,
-            }
-        };
+        return .{ .val = .{
+            @cos(psi), -@sin(psi), 0,
+            @sin(psi), @cos(psi),  0,
+            0,         0,          1,
+        } };
     }
 
     fn rotation(pitch_theta: f32, yaw_psi: f32, roll_phi: f32) Mat33 {
@@ -208,11 +202,11 @@ const MaterialShader = struct {
     emission: f32,
 
     fn new_diffuse(r: f32, g: f32, b: f32) MaterialShader {
-        return .{ .color = .{.val = .{r, g, b}}, .emission = 0 };
+        return .{ .color = .{ .val = .{ r, g, b } }, .emission = 0 };
     }
 
     fn new_emissive(r: f32, g: f32, b: f32, emission: f32) MaterialShader {
-        return .{ .color = .{.val = .{r, g, b}}, .emission = emission };
+        return .{ .color = .{ .val = .{ r, g, b } }, .emission = emission };
     }
 };
 
@@ -238,11 +232,13 @@ const TriShader = union(TriShaderTypeTag) {
 
 const TriPerVertexShader = struct {
     // Per-vertex color
-    colors: [3]@Vector(3, f32) = @splat(@splat(0))
+    colors: [3]@Vector(4, f32) = @splat(@splat(0)),
 };
 
 const TriIntersection = struct {
-    w: f32, u: f32, v: f32,
+    w: f32,
+    u: f32,
+    v: f32,
 };
 
 const IntersectionGeo = union(GeoTypeTag) {
@@ -254,21 +250,23 @@ const Intersection = struct {
     p: Vec3, // Point of intersection
     n: Vec3, // Normalized normal vector of intersection surface
     t: f32, // t value of intersection
-    geo: IntersectionGeo
+    geo: IntersectionGeo,
 };
- 
+
 const Tri = struct {
     // Vertices. typical notation in math is (A, B, C)
-    v: [3]Vec3 = @splat(Vec3.from_xyz(0,0,0)), 
+    v: [3]Vec3 = @splat(Vec3.from_xyz(0, 0, 0)),
     shader: TriShader,
     // TODO: derive normal direction from winding order?
-    // n: Vec3, // n^\hat is normalized normal vector 
+    // n: Vec3, // n^\hat is normalized normal vector
 
     // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
     // `O`: Origin point
     // `D`: Direction vector
     fn intersect(self: *const Tri, O: Vec3, D: Vec3) ?Intersection {
-        const v1 = self.v[0]; const v2 = self.v[1]; const v3 = self.v[2];
+        const v1 = self.v[0];
+        const v2 = self.v[1];
+        const v3 = self.v[2];
 
         // **Obtain normal vector of triangle**
         // TODO: use stored n instead of calculating on the fly
@@ -293,17 +291,17 @@ const Tri = struct {
         // This can be massaged into a system of linear equations:
         //      O - v1 = -t*D + u*(v2 - v1) + v*(v3 - v1);
         // Keep in mind -D, v1, v2, v3, are 3-entry vectors, so we can write
-        // this system in matrix-vector multiplication form. 
+        // this system in matrix-vector multiplication form.
         //
         // [ -D_x  (v2-v1)_x  (v3-v1)_x ][ t ]   [ O_x - v1_x ]
         // [ -D_y  (v2-v1)_y  (v3-v1)_y ][ u ] = [ O_y - v1_y ]
         // [ -D_z  (v2-v1)_z  (v3-v1)_z ][ v ]   [ O_z - v1_z ]
         //
-        // https://en.wikipedia.org/wiki/Cramer%27s_rule 
-        // Cramer's rule is an explicit formula for the solution of a system of 
+        // https://en.wikipedia.org/wiki/Cramer%27s_rule
+        // Cramer's rule is an explicit formula for the solution of a system of
         // linear equations with as many equations as unknown, valid whenever
         // the system has a unique solution.
-        // 
+        //
         // Cramer's rule:
         // Consider a typical system of n linear equations for n unknowns,
         // represented in typical matrix multiplication form:
@@ -326,27 +324,18 @@ const Tri = struct {
             return null;
         }
 
-        // Recover w 
+        // Recover w
         const w = 1 - u - v;
 
         // Return null if intersection of line with triangle is not inside triangle
         if (w < 0 or u < 0 or v < 0) {
             return null;
         }
-        
+
         // Obtain intersection point, from the definition of barycentric coordinates
         const P = v1.mul_scalar(w).add(v2.mul_scalar(u)).add(v3.mul_scalar(v));
 
-        return Intersection {
-            .p = P,
-            .n = n.normalize(),
-            .t = t,
-            .geo = .{
-                .tri = .{
-                    .w=w, .u=u, .v=v
-                }
-            }
-        };
+        return Intersection{ .p = P, .n = n.normalize(), .t = t, .geo = .{ .tri = .{ .w = w, .u = u, .v = v } } };
     }
 
     const TriTestHelpers = struct {
@@ -356,18 +345,15 @@ const Tri = struct {
             try testing.expect(maybe_ti != null);
             if (maybe_ti) |ti| {
                 try testing.expectApproxEqAbs(t, ti.t, EPSILON);
-                inline for (0..3) |i| { 
-                    try testing.expectApproxEqAbs(
-                        ti.p.val[i],
-                        intersect_pos[i],
-                        EPSILON);
+                inline for (0..3) |i| {
+                    try testing.expectApproxEqAbs(ti.p.val[i], intersect_pos[i], EPSILON);
                 }
             }
         }
         fn expect_no_intersect(tri: Tri, o: Vec3, d: Vec3) !void {
             const maybe_ti = tri.intersect(o, d);
             if (maybe_ti) |ti| {
-                std.debug.print("Intersection point at [{} {} {}]", .{ti.p.val[0], ti.p.val[1], ti.p.val[2]});
+                std.debug.print("Intersection point at [{} {} {}]", .{ ti.p.val[0], ti.p.val[1], ti.p.val[2] });
             }
             try testing.expect(maybe_ti == null);
         }
@@ -377,67 +363,37 @@ const Tri = struct {
         const ray_pos = Vec3.from_xyz(0, 0, 0);
         const ray_dir = Vec3.from_xyz(0, 0, 1);
 
-        const tri: Tri = .{
-            .v = .{
-                Vec3.from_xyz(-1, -1,  1),
-                Vec3.from_xyz( 1, -1,  1),
-                Vec3.from_xyz( 0,  1,  1)
-            }
-        };
+        const tri: Tri = .{ .v = .{ Vec3.from_xyz(-1, -1, 1), Vec3.from_xyz(1, -1, 1), Vec3.from_xyz(0, 1, 1) } };
 
-        try TriTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{0, 0, 1}, 1);
+        try TriTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{ 0, 0, 1 }, 1);
     }
 
     test "intersection 2" {
         const ray_pos = Vec3.from_xyz(5, 0, 0);
         const ray_dir = Vec3.from_xyz(0, 0, 1);
 
-        const tri: Tri = .{
-            .v = .{
-                Vec3.from_xyz(-10, -1,  1),
-                Vec3.from_xyz( 10, -1,  1),
-                Vec3.from_xyz( 0,  1,  1)
-            }
-        };
+        const tri: Tri = .{ .v = .{ Vec3.from_xyz(-10, -1, 1), Vec3.from_xyz(10, -1, 1), Vec3.from_xyz(0, 1, 1) } };
 
-        try TriTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{5, 0, 1}, 1);
+        try TriTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{ 5, 0, 1 }, 1);
     }
 
     test "intersection 3" {
         const ray_pos = Vec3.from_xyz(0, 0, 0);
         const ray_dir = Vec3.from_xyz(1, 0, 1).normalize();
 
-        const tri: Tri = .{
-            .v = .{
-                Vec3.from_xyz(-10, -100,  1),
-                Vec3.from_xyz( 100, -100,  1),
-                Vec3.from_xyz( 0,  100,  1)
-            }
-        };
+        const tri: Tri = .{ .v = .{ Vec3.from_xyz(-10, -100, 1), Vec3.from_xyz(100, -100, 1), Vec3.from_xyz(0, 100, 1) } };
 
-        const tri2: Tri = .{
-            .v = .{
-                Vec3.from_xyz(-10, -100,  2),
-                Vec3.from_xyz( 100, -100,  2),
-                Vec3.from_xyz( 0,  100,  2)
-            }
-        };
+        const tri2: Tri = .{ .v = .{ Vec3.from_xyz(-10, -100, 2), Vec3.from_xyz(100, -100, 2), Vec3.from_xyz(0, 100, 2) } };
 
-        try TriTestHelpers.expect_intersect(tri , ray_pos, ray_dir, .{1, 0, 1}, @sqrt(2));
-        try TriTestHelpers.expect_intersect(tri2, ray_pos, ray_dir, .{2, 0, 2}, @sqrt(2.0));
+        try TriTestHelpers.expect_intersect(tri, ray_pos, ray_dir, .{ 1, 0, 1 }, @sqrt(2));
+        try TriTestHelpers.expect_intersect(tri2, ray_pos, ray_dir, .{ 2, 0, 2 }, @sqrt(2.0));
     }
 
     test "non-intersection 1" {
         const ray_pos = Vec3.from_xyz(0, 0, 0);
         const ray_dir = Vec3.from_xyz(0, 1, -1);
 
-        const tri: Tri = .{
-            .v = .{
-                Vec3.from_xyz(-1, -1,  1),
-                Vec3.from_xyz( 1, -1,  1),
-                Vec3.from_xyz( 0,  1,  1)
-            }
-        };
+        const tri: Tri = .{ .v = .{ Vec3.from_xyz(-1, -1, 1), Vec3.from_xyz(1, -1, 1), Vec3.from_xyz(0, 1, 1) } };
 
         try TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
     }
@@ -446,13 +402,7 @@ const Tri = struct {
         const ray_pos = Vec3.from_xyz(5, 0, 0);
         const ray_dir = Vec3.from_xyz(0, 0, 1);
 
-        const tri: Tri = .{
-            .v = .{
-                Vec3.from_xyz(-10, -1,  1),
-                Vec3.from_xyz( 1, -1,  1),
-                Vec3.from_xyz( 0,  1,  1)
-            }
-        };
+        const tri: Tri = .{ .v = .{ Vec3.from_xyz(-10, -1, 1), Vec3.from_xyz(1, -1, 1), Vec3.from_xyz(0, 1, 1) } };
 
         try TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
     }
@@ -461,24 +411,16 @@ const Tri = struct {
         const ray_pos = Vec3.from_xyz(1, -1, 0);
         const ray_dir = Vec3.from_xyz(0, 0, 1);
 
-        const tri: Tri = .{
-            .v = .{
-                Vec3.from_xyz( 0.5, 0.5,  1),
-                Vec3.from_xyz(-0.5, 0.5,  1),
-                Vec3.from_xyz( 0,  -0.5,  1)
-            }
-        };
+        const tri: Tri = .{ .v = .{ Vec3.from_xyz(0.5, 0.5, 1), Vec3.from_xyz(-0.5, 0.5, 1), Vec3.from_xyz(0, -0.5, 1) } };
 
         try TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
     }
-
 };
 
 const Sphere = struct {
     center: Vec3, // typical notation in math is (h, k, j)
     radius: f32,
 };
-
 
 /// Linearly maps a value from a source range to a target range
 fn mapRange(comptime T: type, s: T, a1: T, a2: T, b1: T, b2: T) T {
@@ -527,47 +469,29 @@ var jitter_prng: std.Random.DefaultPrng = undefined;
 var dither_prng: std.Random.DefaultPrng = undefined;
 
 fn add_trongle() !void {
-    try geoms.append(main.gpa, Geo {
-        .tri = .{
-            .v = .{
-                Vec3.from_xyz( 0.5, -0.5,  1),
-                Vec3.from_xyz(-0.5, -0.5,  1),
-                Vec3.from_xyz(   0,  0.5,  1)
-            },
-            .shader = .{ .perVertex = .{ .colors = .{
-                .{1, 0, 0},
-                .{0, 1, 0},
-                .{0, 0, 1}
-            }}}
-        },
+    try geoms.append(main.gpa, Geo{
+        .tri = .{ .v = .{ Vec3.from_xyz(0.5, -0.5, 1), Vec3.from_xyz(-0.5, -0.5, 1), Vec3.from_xyz(0, 0.5, 1) }, .shader = .{ .perVertex = .{ .colors = .{ .{ 1, 0, 0, 0.5 }, .{ 0, 1, 0, 0.5 }, .{ 0, 0, 1, 0.5 } } } } },
     });
 }
 
 fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, shader: TriShader) !void {
     const half_len = len;
 
-    var t1 = Tri {
+    var t1 = Tri{
+        .v = .{ Vec3.from_xyz(-half_len / 2, -half_len / 2, 0), Vec3.from_xyz(-half_len / 2, half_len / 2, 0), Vec3.from_xyz(half_len / 2, half_len / 2, 0) },
+        .shader = shader,
+    };
+
+    var t2 = Tri{
         .v = .{
-            Vec3.from_xyz(-half_len/2, -half_len/2,  0),
-            Vec3.from_xyz(-half_len/2,  half_len/2,  0),
-            Vec3.from_xyz( half_len/2,  half_len/2,  0)
+            Vec3.from_xyz(half_len / 2, -half_len / 2, 0),
+            Vec3.from_xyz(-half_len / 2, -half_len / 2, 0),
+            Vec3.from_xyz(half_len / 2, half_len / 2, 0),
         },
         .shader = shader,
     };
 
-    var t2 = Tri {
-        .v = .{
-            Vec3.from_xyz( half_len/2, -half_len/2,  0),
-            Vec3.from_xyz(-half_len/2, -half_len/2,  0),
-            Vec3.from_xyz( half_len/2,  half_len/2,  0),
-        },
-        .shader = shader,
-    };
-
-    const rot = Mat33.rotation(
-        degToRad(pitch_deg), 
-        degToRad(yaw_deg), 
-        degToRad(roll_deg));
+    const rot = Mat33.rotation(degToRad(pitch_deg), degToRad(yaw_deg), degToRad(roll_deg));
 
     for (&t1.v) |*v| {
         v.* = rot.mul_vec(v.*).add(pos);
@@ -580,7 +504,7 @@ fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, sh
     const g1: Geo = .{ .tri = t1 };
     const g2: Geo = .{ .tri = t2 };
 
-    try geoms.appendSlice(main.gpa, &[_]Geo{g1, g2});
+    try geoms.appendSlice(main.gpa, &[_]Geo{ g1, g2 });
 }
 
 pub fn zaytrace_init() !void {
@@ -600,15 +524,15 @@ pub fn zaytrace_init() !void {
     try add_trongle();
 
     // *CORNELL BOX MENTIONED*
-    try add_quad(Vec3.from_xyz( 1, 0, 1.25), 2,  90, 0, 0, .{.material = MaterialShader.new_diffuse(1, 0, 0)}); // left wall
-    try add_quad(Vec3.from_xyz(-1, 0, 1.25), 2, -90, 0, 0, .{.material = MaterialShader.new_diffuse(0, 1, 0)}); // right wall
+    try add_quad(Vec3.from_xyz(1, 0, 1.25), 2, 90, 0, 0, .{ .material = MaterialShader.new_diffuse(1, 0, 0) }); // left wall
+    try add_quad(Vec3.from_xyz(-1, 0, 1.25), 2, -90, 0, 0, .{ .material = MaterialShader.new_diffuse(0, 1, 0) }); // right wall
 
-    try add_quad(Vec3.from_xyz(0,  1, 1.25), 2, 0, 0,  90, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // roof
-    try add_quad(Vec3.from_xyz(0, -1, 1.25), 2, 0, 0, -90, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // floor
+    try add_quad(Vec3.from_xyz(0, 1, 1.25), 2, 0, 0, 90, .{ .material = MaterialShader.new_diffuse(1, 1, 1) }); // roof
+    try add_quad(Vec3.from_xyz(0, -1, 1.25), 2, 0, 0, -90, .{ .material = MaterialShader.new_diffuse(1, 1, 1) }); // floor
 
     // try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_emissive(0, 0, 1, 1)}); // light
-    
-    try add_quad(Vec3.from_xyz(0, 0, 2.25), 2, 0, 90, 0, .{.material = MaterialShader.new_diffuse(1, 1, 1)}); // rear wall
+
+    try add_quad(Vec3.from_xyz(0, 0, 2.25), 2, 0, 90, 0, .{ .material = MaterialShader.new_diffuse(1, 1, 1) }); // rear wall
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
@@ -627,7 +551,7 @@ pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
 }
 
 // accumulator for antialiasing
-var accumulator_buf: [main.WINDOW_HEIGHT][main.WINDOW_WIDTH]Rgbf32 = 
+var accumulator_buf: [main.WINDOW_HEIGHT][main.WINDOW_WIDTH]Rgbf32 =
     @splat(@splat(Rgbf32.from_rgb_f32(0, 0, 0)));
 var accumulate_steps: u32 = 0;
 
@@ -635,7 +559,7 @@ pub const MAX_ACCUMULATE_STEPS = 1024;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
-fn random_jitter() struct {f32, f32} {
+fn random_jitter() struct { f32, f32 } {
     // prng.next() returns integer with uniform distribution in the entire u64 domain
     const next = jitter_prng.next();
 
@@ -644,13 +568,13 @@ fn random_jitter() struct {f32, f32} {
     const y_jitter_int = (next >> 32) & 0xFFFFFFFF;
 
     return .{
-        @as(f32, @floatFromInt(x_jitter_int)) / 0xFFFFFFFF.0 - 0.5,     
-        @as(f32, @floatFromInt(y_jitter_int)) / 0xFFFFFFFF.0 - 0.5,     
+        @as(f32, @floatFromInt(x_jitter_int)) / 0xFFFFFFFF.0 - 0.5,
+        @as(f32, @floatFromInt(y_jitter_int)) / 0xFFFFFFFF.0 - 0.5,
     };
 }
 
 // 2-tuple with each entry being random value in [-1, 1]
-fn random_bounce() struct {f32, f32} {
+fn random_bounce() struct { f32, f32 } {
     // prng.next() returns integer with uniform distribution in the entire u64 domain
     const next = jitter_prng.next();
 
@@ -659,16 +583,27 @@ fn random_bounce() struct {f32, f32} {
     const y_jitter_int = (next >> 32) & 0xFFFFFFFF;
 
     return .{
-        @as(f32, @floatFromInt(x_jitter_int)) / 0x7FFFFFFF.0 - 1,     
-        @as(f32, @floatFromInt(y_jitter_int)) / 0x7FFFFFFF.0 - 1,     
+        @as(f32, @floatFromInt(x_jitter_int)) / 0x7FFFFFFF.0 - 1,
+        @as(f32, @floatFromInt(y_jitter_int)) / 0x7FFFFFFF.0 - 1,
     };
+}
+
+// return is random value in [0, 1]
+fn random_alpha() f32 {
+    // prng.next() returns integer with uniform distribution in the entire u64 domain
+    const next = jitter_prng.next();
+
+    // split it in half to get two 32-bit vars where each bit is I.I.D.
+    const int = next & 0xFFFFFFFF;
+
+    return @as(f32, @floatFromInt(int)) / 0xFFFFFFFF.0;
 }
 
 const DITHER_DIVISOR = 256;
 
 fn update_and_dither_output_buffer(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
     dither_prng.seed(0);
-    
+
     for (&buf.*, 0..) |*row_pixels, row| {
         for (row_pixels, 0..) |*px, col| {
             // prng.next() returns integer with uniform distribution in the entire u64 domain
@@ -676,14 +611,14 @@ fn update_and_dither_output_buffer(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]
 
             // get bottom half to get a 32-bit var where each bit is I.I.D.
             const int = next & 0xFFFFFFFF;
-            const uniform_rect_dist = 
+            const uniform_rect_dist =
                 (@as(f32, @floatFromInt(int)) / 0xFFFFFFFF.0 - 0.5) * (1 / DITHER_DIVISOR);
 
-            var dithered = accumulator_buf[row][col].add(.{.val = .{
+            var dithered = accumulator_buf[row][col].add(.{ .val = .{
                 uniform_rect_dist,
                 uniform_rect_dist,
                 uniform_rect_dist,
-            }});
+            } });
 
             px.* = dithered.to_argb8888(1);
         }
@@ -703,7 +638,7 @@ pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) u32 {
                 const jitter = random_jitter();
                 const row_jittered = @as(f32, @floatFromInt(row)) + jitter.@"0";
                 const col_jittered = @as(f32, @floatFromInt(col)) + jitter.@"1";
-                
+
                 const norm_y = mapRange(f32, row_jittered, 0, main.WINDOW_HEIGHT, -1, 1);
                 const norm_x = mapRange(f32, col_jittered, 0, main.WINDOW_WIDTH, -1, 1);
 
@@ -711,8 +646,7 @@ pub fn zaytrace_image(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) u32 {
                 // https://en.wikipedia.org/wiki/Moving_average#Cumulative_average
                 const acc_px = &accumulator_buf[row][col];
                 const new_px = zaytrace_image_inner(norm_x, norm_y);
-                acc_px.* = new_px.add(
-                    acc_px.mul_scalar(@floatFromInt(accumulate_steps)))
+                acc_px.* = new_px.add(acc_px.mul_scalar(@floatFromInt(accumulate_steps)))
                     .div(@floatFromInt(accumulate_steps + 1));
             }
         }
@@ -735,7 +669,7 @@ fn degToRad(deg: f32) f32 {
 // is (-1, -1) and the bottom right is (1, 1).
 fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
     // Flip y to make y up
-    const norm_y = flipped_norm_y * -1; 
+    const norm_y = flipped_norm_y * -1;
 
     // const SCALE_X = main.WINDOW_WIDTH;
     // const SCALE_Y = main.WINDOW_HEIGHT;
@@ -750,7 +684,7 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
     const FOV_VERTICAL_RAD: f32 = degToRad(30);
 
     // Given a projection plane 1 unit ahead of the camera,
-    // how far away from the center of the plane are the 
+    // how far away from the center of the plane are the
     // left/right (x_outer_bound) and top/bottom (y_outer_bound) edges?
     const x_outer_bound = @tan(FOV_HORIZONTAL_RAD);
     const y_outer_bound = @tan(FOV_VERTICAL_RAD);
@@ -759,10 +693,7 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
     const y_dir_unnormalized = norm_y * y_outer_bound;
 
     const ray_pos = Vec3.from_xyz(x, y, 0);
-    const ray_dir = Vec3.from_xyz(
-        x_dir_unnormalized,
-        y_dir_unnormalized, 
-        1).normalize();
+    const ray_dir = Vec3.from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1).normalize();
 
     return zaytrace_ray(null, ray_pos, ray_dir, 0);
 }
@@ -784,17 +715,37 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                 if (tri.intersect(ray_pos, ray_dir)) |inter| {
                     if (inter.t < closest_inter_t) {
                         closest_inter_t = inter.t;
+
+                        // TODO: alpha only applies to direct bounces so far. add separate indirect/direct bounce settings
+                        if (bounces == 0) {
+                            switch (tri.shader) {
+                                .perVertex => |perVertex| {
+                                    const w = inter.geo.tri.w;
+                                    const v = inter.geo.tri.v;
+                                    const u = inter.geo.tri.u;
+
+                                    const colors = perVertex.colors;
+                                    const a = w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
+
+                                    if (a > random_alpha()) {
+                                        continue;
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+
                         maybe_closest_inter = inter;
                         maybe_closest_inter_geo = geo;
                     }
                 }
-            }
+            },
         }
     }
 
     if (maybe_closest_inter) |closest_inter| {
         const tri_inter = closest_inter.geo.tri;
-        if (maybe_closest_inter_geo) |geo| {  
+        if (maybe_closest_inter_geo) |geo| {
             switch (geo.*) {
                 .tri => |tri| {
                     switch (tri.shader) {
@@ -805,10 +756,10 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                             const u = tri_inter.u;
 
                             const colors = perVertex.colors;
-                            const r = w*colors[0][0] + v*colors[1][0] + u*colors[2][0];
-                            const g = w*colors[0][1] + v*colors[1][1] + u*colors[2][1];
-                            const b = w*colors[0][2] + v*colors[1][2] + u*colors[2][2];
-                            
+                            const r = w * colors[0][0] + v * colors[1][0] + u * colors[2][0];
+                            const g = w * colors[0][1] + v * colors[1][1] + u * colors[2][1];
+                            const b = w * colors[0][2] + v * colors[1][2] + u * colors[2][2];
+
                             // make it much brighter if it's indirect bounce
                             if (bounces > 0) {
                                 return Rgbf32.from_rgb_f32(r, g, b).mul_scalar(10);
@@ -830,19 +781,21 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                                 // **Find orthonormal basis**
                                 // Building an Orthonormal Basis, Revisited - Pixar
                                 // https://jcgt.org/published/0006/01/01/
-                                const x = n.val[0]; const y = n.val[1]; const z = n.val[2]; 
+                                const x = n.val[0];
+                                const y = n.val[1];
+                                const z = n.val[2];
                                 const sign = std.math.sign(z);
                                 const a = -1.0 / (sign + z);
                                 const b = x * y * a;
-                                const b1 = Vec3 {.val = .{1 + sign * x*x * a, sign * b, -sign * x}};
-                                const b2 = Vec3 {.val = .{b, sign + y*y * a, -y}};
+                                const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };
+                                const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
 
                                 // now <n, b1, b2> is an orthonormal basis
                                 // get a random 2D vector that is within the unit circle
                                 // TODO there are definitely better distributions than this.
                                 // TODO I just pulled this one out of my intuition
                                 var random = random_bounce();
-                                while (@sqrt(random.@"0"*random.@"0" + random.@"1"*random.@"1") > 1) {
+                                while (@sqrt(random.@"0" * random.@"0" + random.@"1" * random.@"1") > 1) {
                                     random = random_bounce();
                                 }
                                 const bounce_dir = n.add(b1.mul_scalar(random.@"0")).add(b2.mul_scalar(random.@"1")).normalize();
@@ -850,21 +803,21 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                                 assert(bounce_dir.dot(n) > 0);
                                 return material.color.mul_elementwise(zaytrace_ray(geo, closest_inter.p, bounce_dir, bounces + 1));
                                 // return material.color.mul_scalar(0.5);
-                                
-                                // Point-normal form vector form of plane: 
+
+                                // Point-normal form vector form of plane:
                                 //      n*(r-r0)=0
                                 //      where n, r, and r0 are vectors
                                 //      * n: normal vector
                                 //      * r: any point on plane
                                 //      * r0: specific point on the plane
-                                // closest_inter.p is intersection point 
-                                // const 
-                                
+                                // closest_inter.p is intersection point
+                                // const
+
                                 // return material.color;
                             }
-                        }
+                        },
                     }
-                }
+                },
             }
         }
     }
