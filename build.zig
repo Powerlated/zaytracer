@@ -7,7 +7,7 @@ const translate_c = @import("translate_c");
 // for defining build steps and express dependencies between them, allowing the
 // build runner to parallelize the build automatically (and the cache system to
 // know when a step doesn't need to be re-run).
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // Standard target options allow the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -58,19 +58,23 @@ pub fn build(b: *std.Build) void {
     const sdl_lib = sdl_dep.artifact("SDL3");
 
     // https://github.com/castholm/zig-examples/blob/master/breakout/build.zig#L31
+    // initialize C header translator
     const translate_c_dep = b.dependency("translate_c", .{});
-    const translator: translate_c.Translator = .init(translate_c_dep, .{
+
+    const translator_c: translate_c.Translator = .init(translate_c_dep, .{
         .c_source_file = b.addWriteFiles().add("c.h",
             \\#define SDL_DISABLE_OLD_NAMES
             \\#include <SDL3/SDL.h>
             \\#include <SDL3/SDL_revision.h>
             \\#define SDL_MAIN_HANDLED
             \\#include <SDL3/SDL_main.h>
+            \\#include <windows.h>
+            \\#include <tlhelp32.h>
         ),
         .target = target,
         .optimize = optimize,
     });
-    translator.linkLibrary(sdl_lib);
+    translator_c.linkLibrary(sdl_lib);
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -108,9 +112,22 @@ pub fn build(b: *std.Build) void {
             // can be extremely useful in case of collisions (which can happen
             // importing modules from different packages).
             .{ .name = "zaytracer", .module = mod },
-            .{ .name = "c", .module = translator.mod },
+            .{ .name = "c", .module = translator_c.mod },
         },
     });
+
+    // Translate Windows headers
+    // const headers = [_][]const u8{ "windows" };
+    // for (headers) |header_name| {
+    //     const incl = try std.fmt.allocPrint(b.allocator, "#include <{s}.h>", .{header_name});
+    //     defer b.allocator.free(incl);
+    //     const translator: translate_c.Translator = .init(translate_c_dep, .{
+    //         .c_source_file = b.addWriteFiles().add("c.h", incl),
+    //         .target = target,
+    //         .optimize = optimize,
+    //     });
+    //     exe_mod.addImport(header_name, translator.mod);
+    // }
 
     const exe = b.addExecutable(.{
         .name = "zaytracer",
@@ -124,6 +141,11 @@ pub fn build(b: *std.Build) void {
     // step). By default the install prefix is `zig-out/` but can be overridden
     // by passing `--prefix` or `-p`.
     b.installArtifact(exe);
+    b.installArtifact(sdl_dep.artifact("SDL3"));
+
+    // Brian: Dump assembly of executable
+    const install_asm = b.addInstallFile(exe.getEmittedAsm(), "zaytracer.s");
+    b.getInstallStep().dependOn(&install_asm.step);
 
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).

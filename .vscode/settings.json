@@ -1,0 +1,5 @@
+{
+    "disasexpl.associations": {
+        "**/*.zig": "${workspaceFolder}/zig-out/zaytracer.s"
+    }
+}

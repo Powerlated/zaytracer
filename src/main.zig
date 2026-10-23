@@ -4,6 +4,8 @@ const Io = std.Io;
 const builtin = @import("builtin");
 const c = @import("c");
 
+const platform = @import("platform/windows.zig");
+
 const sdl_log = std.log.scoped(.sdl);
 const app_log = std.log.scoped(.app);
 
@@ -33,6 +35,8 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     _ = appstate;
     _ = argv;
     _ = c.SDL_SetAppMetadata("Example Renderer Geometry", "1.0", "com.example.renderer-geometry");
+
+    platform.isolateCoreForThisProcess(7, 2);
 
     try zaytracer_core.zaytrace_init();
 
