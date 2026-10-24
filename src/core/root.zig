@@ -396,12 +396,12 @@ fn add_square(len: f32, shader: TriShader) !GeosHandle {
 /// Cube with side length `len`, centered on (0, 0, 0).
 fn add_cube(len: f32) !GeosHandle {
     const hFaces = [_]GeosHandle {
-        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 0, 0) } )).rotate(  0, -90,  0).translate( len/2,      0,      0), //  x
-        (try add_square(len, .{ .material = MaterialShader.new_diffuse(0, 1, 0) } )).rotate(-90,   0,  0).translate(     0,  len/2,      0), //  y
-        (try add_square(len, .{ .material = MaterialShader.new_diffuse(0, 0, 1) } )).rotate(  0,   0,  0).translate(     0,      0,  len/2), //  z
-        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 0, 0) } )).rotate(  0,  90,  0).translate(-len/2,      0,      0), // -x
-        (try add_square(len, .{ .material = MaterialShader.new_diffuse(0, 1, 0) } )).rotate( 90,   0,  0).translate(     0, -len/2,      0), // -y
-        (try add_square(len, .{ .material = MaterialShader.new_diffuse(0, 0, 1) } )).rotate(180,   0,  0).translate(     0,      0, -len/2), // -z   
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 1, 1) } )).rotate(  0, -90,  0).translate( len/2,      0,      0), //  x
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 1, 1) } )).rotate(-90,   0,  0).translate(     0,  len/2,      0), //  y
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 1, 1) } )).rotate(  0,   0,  0).translate(     0,      0,  len/2), //  z
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 1, 1) } )).rotate(  0,  90,  0).translate(-len/2,      0,      0), // -x
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 1, 1) } )).rotate( 90,   0,  0).translate(     0, -len/2,      0), // -y
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 1, 1) } )).rotate(180,   0,  0).translate(     0,      0, -len/2), // -z   
     };
 
     const consolidated = GeosHandle.consolidate(main.gpa, &hFaces);
@@ -597,7 +597,7 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
 }
 
 // **Inner raytracing loop** :D
-const MAX_BOUNCES = 4;
+const MAX_BOUNCES = 16;
 fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) Rgbf32 {
     if (bounces > MAX_BOUNCES) return Rgbf32.from_rgb_f32(0, 0, 0);
 
