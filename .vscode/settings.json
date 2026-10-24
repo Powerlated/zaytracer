@@ -1,5 +1,9 @@
 {
     "disasexpl.associations": {
         "**/*.zig": "${workspaceFolder}/zig-out/zaytracer.s"
-    }
+    },
+    "lldb.displayFormat": "auto",
+    "lldb.showDisassembly": "always",
+    "lldb.dereferencePointers": true,
+    "lldb.consoleMode": "commands"
 }

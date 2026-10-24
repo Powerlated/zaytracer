@@ -4,6 +4,10 @@ const testing = std.testing;
 pub const Vec3 = struct {
     val: @Vector(3, f32),
 
+    pub fn zero() Vec3 {
+        return .{ .val = .{ 0, 0, 0 } };
+    }
+
     pub fn from_xyz(x: f32, y: f32, z: f32) Vec3 {
         return .{ .val = .{ x, y, z } };
     }

@@ -343,7 +343,7 @@ fn add_geos(geos_to_add: anytype) !GeosHandle {
     return .{ .val = @intCast(handle_to_return) };
 }
 
-var jitter_prng: std.Random.DefaultPrng = undefined;
+var main_prng: std.Random.DefaultPrng = undefined;
 var dither_prng: std.Random.DefaultPrng = undefined;
 
 fn add_trongle() !void {
@@ -414,7 +414,7 @@ pub fn zaytrace_init() !void {
     handleToGeoIdsArrayList = .empty;
     // geo.append(root.gpa, Sphere{.center = } );
 
-    jitter_prng = .init(blk: {
+    main_prng = .init(blk: {
         // start from seed 0 always
         break :blk 0;
     });
@@ -468,7 +468,7 @@ pub const MAX_ACCUMULATE_STEPS = 1024;
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
 fn random_jitter() struct { f32, f32 } {
     // prng.next() returns integer with uniform distribution in the entire u64 domain
-    const next = jitter_prng.next();
+    const next = main_prng.next();
 
     // split it in half to get two 32-bit vars where each bit is I.I.D.
     const x_jitter_int = next & 0xFFFFFFFF;
@@ -480,25 +480,38 @@ fn random_jitter() struct { f32, f32 } {
     };
 }
 
-// 2-tuple with each entry being random value in [-1, 1]
-fn random_bounce() struct { f32, f32 } {
-    // prng.next() returns integer with uniform distribution in the entire u64 domain
-    const next = jitter_prng.next();
+// 3D vector that is evenly distributed on the unit sphere
+fn random_unit_vector() Vec3 {
+    while (true) {
+        // prng.next() returns integer with uniform distribution in the entire u64 domain
+        const next = main_prng.next();
 
-    // split it in half to get two 32-bit vars where each bit is I.I.D.
-    const x_jitter_int = next & 0xFFFFFFFF;
-    const y_jitter_int = (next >> 32) & 0xFFFFFFFF;
+        // split it in three to get three 21-bit vars where each bit is I.I.D.
+        const xyz_int: @Vector(3, u64) = .{next & 0x1FFFFF,
+                                           (next >> 21) & 0x1FFFFF,
+                                           (next >> 42) & 0x1FFFFF};
 
-    return .{
-        @as(f32, @floatFromInt(x_jitter_int)) / 0x7FFFFFFF.0 - 1,
-        @as(f32, @floatFromInt(y_jitter_int)) / 0x7FFFFFFF.0 - 1,
-    };
+        var xyz_float: @Vector(3, f32) = .{@floatFromInt(xyz_int[0]),
+                                             @floatFromInt(xyz_int[1]),
+                                             @floatFromInt(xyz_int[2])};
+
+        xyz_float = xyz_float
+            / @as(@Vector(3, f32), @splat(0x1FFFFF.0))
+            - @as(@Vector(3, f32), @splat(-0.5))
+            * @as(@Vector(3, f32), @splat(2.0));
+
+        const xyz_magn = @sqrt(@reduce(.Add, xyz_float * xyz_float));
+        
+        if (xyz_magn <= 1) {
+            return (Vec3 {.val = xyz_float}).normalize();
+        }
+    }
 }
 
 // return is random value in [0, 1]
 fn random_alpha() f32 {
     // prng.next() returns integer with uniform distribution in the entire u64 domain
-    const next = jitter_prng.next();
+    const next = main_prng.next();
 
     // split it in half to get two 32-bit vars where each bit is I.I.D.
     const int = next & 0xFFFFFFFF;
@@ -683,39 +696,29 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                                 // **Find orthonormal basis**
                                 // Building an Orthonormal Basis, Revisited - Pixar
                                 // https://jcgt.org/published/0006/01/01/
-                                const x = n.val[0];
-                                const y = n.val[1];
-                                const z = n.val[2];
-                                const sign = std.math.copysign(@as(f32, 1), z); // std.math.copysign is not the same as std.math.sign
-                                const a = -1.0 / (sign + z);
-                                const b = x * y * a;
-                                const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };
-                                const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
-
+                                // const x = n.val[0];
+                                // const y = n.val[1];
+                                // const z = n.val[2];
+                                // const sign = std.math.copysign(@as(f32, 1), z); // std.math.copysign is not the same as std.math.sign
+                                // const a = -1.0 / (sign + z);
+                                // const b = x * y * a;
+                                // const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };
+                                // const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
                                 // now <n, b1, b2> is an orthonormal basis
-                                // get a random 2D vector that is within the unit circle
-                                // TODO there are definitely better distributions than this.
-                                // TODO I just pulled this one out of my intuition
-                                var random = random_bounce();
-                                while (@sqrt(random.@"0" * random.@"0" + random.@"1" * random.@"1") > 1) {
-                                    random = random_bounce();
+
+                                // get a random 2D vector within the hemisphere that will bounce away from the surface
+                                var bounce_dir = random_unit_vector();
+                                if (n.dot(bounce_dir) < 0) {
+                                    bounce_dir = bounce_dir.mul_scalar(-1);
                                 }
-                                const bounce_dir = n.add(b1.mul_scalar(random.@"0")).add(b2.mul_scalar(random.@"1")).normalize();
 
-                                assert(bounce_dir.dot(n) > 0);
-                                return material.color.mul_elementwise(zaytrace_ray(geo, closest_inter.p, bounce_dir, bounces + 1));
-                                // return material.color.mul_scalar(0.5);
+                                // cos(θ) = a ⋅ b / |a||b|, but since bounce_dir and n are unit vectors, no need to divide by |a||b|
+                                // const lambertian_scalar = n.dot(bounce_dir);
 
-                                // Point-normal form vector form of plane:
-                                //      n*(r-r0)=0
-                                //      where n, r, and r0 are vectors
-                                //      * n: normal vector
-                                //      * r: any point on plane
-                                //      * r0: specific point on the plane
-                                // closest_inter.p is intersection point
-                                // const
-
-                                // return material.color;
+                                // assert(bounce_dir.dot(n) > 0);
+                                return material.color
+                                    .mul_elementwise(zaytrace_ray(geo, closest_inter.p, bounce_dir, bounces + 1));
+                                    // .mul_scalar(lambertian_scalar);
                             }
                         },
                     }
