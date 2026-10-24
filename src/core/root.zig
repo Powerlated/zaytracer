@@ -395,13 +395,13 @@ fn add_square(len: f32, shader: TriShader) !GeosHandle {
 
 /// Cube with side length `len`, centered on (0, 0, 0).
 fn add_cube(len: f32) !GeosHandle {
-    const hFaces = [6]GeosHandle {
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(1, 0, 0, 4) } )).rotate(  0, 90,  0).translate( len/2,      0,      0), //  x
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 1, 0, 4) } )).rotate( 90,  0,  0).translate(     0,  len/2,      0), //  y
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 0, 1, 4) } )).rotate(  0,  0,  0).translate(     0,      0,  len/2), //  z
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(1, 0, 0, 4) } )).rotate(  0,-90,  0).translate(-len/2,      0,      0), // -x
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 1, 0, 4) } )).rotate(-90,  0,  0).translate(     0, -len/2,      0), // -y
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 0, 1, 4) } )).rotate(180,  0,  0).translate(     0,      0, -len/2), // -z   
+    const hFaces = [_]GeosHandle {
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 0, 0) } )).rotate(  0, -90,  0).translate( len/2,      0,      0), //  x
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(0, 1, 0) } )).rotate(-90,   0,  0).translate(     0,  len/2,      0), //  y
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(0, 0, 1) } )).rotate(  0,   0,  0).translate(     0,      0,  len/2), //  z
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(1, 0, 0) } )).rotate(  0,  90,  0).translate(-len/2,      0,      0), // -x
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(0, 1, 0) } )).rotate( 90,   0,  0).translate(     0, -len/2,      0), // -y
+        (try add_square(len, .{ .material = MaterialShader.new_diffuse(0, 0, 1) } )).rotate(180,   0,  0).translate(     0,      0, -len/2), // -z   
     };
 
     const consolidated = GeosHandle.consolidate(main.gpa, &hFaces);
@@ -426,7 +426,7 @@ pub fn zaytrace_init() !void {
 
     // try add_trongle();
 
-    // _ = (try add_square(0.5, .{ .material = MaterialShader.new_emissive(1, 1, 1, 2) })).rotate(0, 70, 0).translate(0, -0.75, 1.25);
+    _ = (try add_square(1, .{ .material = MaterialShader.new_emissive(1, 1, 1, 4) })).rotate(90, 0, 0).translate(0, 0.999, 1);
 
     // *CORNELL BOX MENTIONED*
     _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 0, 0) })).rotate(  0,  90,  0).translate( 1, 0, 1.25);   // left wall
@@ -439,7 +439,7 @@ pub fn zaytrace_init() !void {
 
     _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0,  0,  0).translate(0,  0, 2.25);   // rear wall
 
-    _ = (try add_cube(0.5)).rotate(0, -70, 0).translate(0, -0.75, 1);
+    _ = (try add_cube(0.5)).rotate(0, -70, 0).translate(-0.25, -0.75, 1.25);
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
@@ -686,7 +686,7 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                                 const x = n.val[0];
                                 const y = n.val[1];
                                 const z = n.val[2];
-                                const sign = std.math.sign(z);
+                                const sign = std.math.copysign(@as(f32, 1), z); // std.math.copysign is not the same as std.math.sign
                                 const a = -1.0 / (sign + z);
                                 const b = x * y * a;
                                 const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };

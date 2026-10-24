@@ -11,4 +11,4 @@
             "program": "${workspaceFolder}/zig-out/bin/zaytracer.exe",
         }
     ]
-}w
+}
