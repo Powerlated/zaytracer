@@ -18,7 +18,7 @@ const target_triple: [:0]const u8 = x: {
 };
 
 const zaytracer = @import("zaytracer");
-const zaytracer_core = @import("zaytracer_core.zig");
+const zaytracer_core = @import("core/root.zig");
 
 // We will use this renderer to draw into this window every frame.
 var window: *c.SDL_Window = undefined;
@@ -193,8 +193,8 @@ const ErrorStore = struct {
 //#endregion SDL main callbacks boilerplate
 
 test {
-    // Register zaytracer_core.zig for testing
-    _ = @import("zaytracer_core.zig");
+    // Register zaytracer core for testing
+    _ = @import("core/root.zig");
 }
 
 // pub fn orig_main(init: std.process.Init) !void {
