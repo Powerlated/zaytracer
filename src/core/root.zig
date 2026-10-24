@@ -575,7 +575,12 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                         .material => |material| {
                             if (material.emission >= 1) {
                                 // Do not bounce if fully emissive
-                                return material.color.mul_scalar(material.emission);
+                                if (bounces > 0) {
+                                    return material.color.mul_scalar(material.emission);
+                                } else {
+                                    // To avoid color clipping, don't multiply direct rays by more than 1
+                                    return material.color;
+                                }
                             } else {
                                 var n = closest_inter.n;
                                 if (n.dot(ray_dir) > 0) {
