@@ -291,11 +291,7 @@ fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, sh
     const half_len = len;
 
     var t1 = Tri{
-        .v = .{
-            Vec3.from_xyz(-half_len / 2, -half_len / 2, 0),
-            Vec3.from_xyz(-half_len / 2, half_len / 2, 0),
-            Vec3.from_xyz(half_len / 2, half_len / 2, 0)
-        },
+        .v = .{ Vec3.from_xyz(-half_len / 2, -half_len / 2, 0), Vec3.from_xyz(-half_len / 2, half_len / 2, 0), Vec3.from_xyz(half_len / 2, half_len / 2, 0) },
         .shader = shader,
     };
 
@@ -340,7 +336,7 @@ pub fn zaytrace_init() !void {
 
     // try add_trongle();
 
-    try add_quad(Vec3.from_xyz(0, -0.5, 1.25), 0.75, 70, 0, 0, .{ .material = MaterialShader.new_emissive(1, 1, 1, 1) }); // left wall
+    try add_quad(Vec3.from_xyz(0, -0.5, 1.25), 0.75, 70, 0, 0, .{ .material = MaterialShader.new_emissive(1, 1, 1, 2) });
 
     // *CORNELL BOX MENTIONED*
     try add_quad(Vec3.from_xyz(1, 0, 1.25), 2, 90, 0, 0, .{ .material = MaterialShader.new_diffuse(1, 0, 0) }); // left wall
@@ -490,28 +486,19 @@ fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) Rgbf32 {
     // Flip y to make y up
     const norm_y = flipped_norm_y * -1;
 
-    // const SCALE_X = main.WINDOW_WIDTH;
-    // const SCALE_Y = main.WINDOW_HEIGHT;
-    const SCALE_X = 1;
-    const SCALE_Y = 1;
-
-    const x = SCALE_X * norm_x;
-    const y = SCALE_Y * norm_y;
-
     // **Perspective Projection**
-    const FOV_HORIZONTAL_RAD: f32 = degToRad(45);
-    const FOV_VERTICAL_RAD: f32 = degToRad(30);
+    const FOV_HORIZONTAL_RAD: f32 = degToRad(35);
 
     // Given a projection plane 1 unit ahead of the camera,
     // how far away from the center of the plane are the
     // left/right (x_outer_bound) and top/bottom (y_outer_bound) edges?
     const x_outer_bound = @tan(FOV_HORIZONTAL_RAD);
-    const y_outer_bound = @tan(FOV_VERTICAL_RAD);
+    const y_outer_bound = x_outer_bound * (@as(f32, main.WINDOW_HEIGHT) / main.WINDOW_WIDTH);
 
     const x_dir_unnormalized = norm_x * x_outer_bound;
     const y_dir_unnormalized = norm_y * y_outer_bound;
 
-    const ray_pos = Vec3.from_xyz(x, y, 0);
+    const ray_pos = Vec3.from_xyz(0, 0, -2);
     const ray_dir = Vec3.from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1).normalize();
 
     return zaytrace_ray(null, ray_pos, ray_dir, 0);
@@ -586,9 +573,9 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                             }
                         },
                         .material => |material| {
-                            if (material.emission == 1) {
+                            if (material.emission >= 1) {
                                 // Do not bounce if fully emissive
-                                return material.color;
+                                return material.color.mul_scalar(material.emission);
                             } else {
                                 var n = closest_inter.n;
                                 if (n.dot(ray_dir) > 0) {
