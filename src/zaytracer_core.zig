@@ -478,7 +478,11 @@ fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, sh
     const half_len = len;
 
     var t1 = Tri{
-        .v = .{ Vec3.from_xyz(-half_len / 2, -half_len / 2, 0), Vec3.from_xyz(-half_len / 2, half_len / 2, 0), Vec3.from_xyz(half_len / 2, half_len / 2, 0) },
+        .v = .{
+            Vec3.from_xyz(-half_len / 2, -half_len / 2, 0),
+            Vec3.from_xyz(-half_len / 2, half_len / 2, 0),
+            Vec3.from_xyz(half_len / 2, half_len / 2, 0)
+        },
         .shader = shader,
     };
 
@@ -521,7 +525,9 @@ pub fn zaytrace_init() !void {
         break :blk 0;
     });
 
-    try add_trongle();
+    // try add_trongle();
+
+    try add_quad(Vec3.from_xyz(0, -0.5, 1.25), 0.75, 70, 0, 0, .{ .material = MaterialShader.new_emissive(1, 1, 1, 1) }); // left wall
 
     // *CORNELL BOX MENTIONED*
     try add_quad(Vec3.from_xyz(1, 0, 1.25), 2, 90, 0, 0, .{ .material = MaterialShader.new_diffuse(1, 0, 0) }); // left wall
@@ -714,9 +720,7 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
             .tri => |tri| {
                 if (tri.intersect(ray_pos, ray_dir)) |inter| {
                     if (inter.t < closest_inter_t) {
-                        closest_inter_t = inter.t;
-
-                        // TODO: alpha only applies to direct bounces so far. add separate indirect/direct bounce settings
+                        // TODO: alpha only applies to direct rays so far. add separate indirect/direct bounce settings
                         if (bounces == 0) {
                             switch (tri.shader) {
                                 .perVertex => |perVertex| {
@@ -735,6 +739,7 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
                             }
                         }
 
+                        closest_inter_t = inter.t;
                         maybe_closest_inter = inter;
                         maybe_closest_inter_geo = geo;
                     }
