@@ -277,25 +277,51 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgbf32 {
     return .{ .val = p + @as(@Vector(3, f32), @splat(m)) };
 }
 
-var geoms: std.ArrayList(Geo) = undefined;
+var geos: std.ArrayList(Geo) = undefined;
+const GeosHandle = struct {
+    indices: []u32,
+
+    fn rotate(self: GeosHandle, pitch_deg: f32, yaw_deg: f32, roll_deg: f32) GeosHandle {
+        const rot = Mat33.rotation(degToRad(pitch_deg), degToRad(yaw_deg), degToRad(roll_deg));
+
+        for (self.indices) |hGeo| {
+            for (&geos.items[hGeo].tri.v) |*v| {
+                v.* = rot.mul_vec(v.*);
+            }
+        }
+
+        return self;
+    }
+
+    fn translate(self: GeosHandle, x: f32, y: f32, z: f32) GeosHandle {
+        for (self.indices) |hGeo| {
+            for (&geos.items[hGeo].tri.v) |*v| {
+                v.* = v.add(Vec3.from_xyz(x, y, z));
+            }
+        }
+
+        return self;
+    }
+};
+
 var jitter_prng: std.Random.DefaultPrng = undefined;
 var dither_prng: std.Random.DefaultPrng = undefined;
 
 fn add_trongle() !void {
-    try geoms.append(main.gpa, Geo{
+    try geos.append(main.gpa, Geo{
         .tri = .{ .v = .{ Vec3.from_xyz(0.5, -0.5, 1), Vec3.from_xyz(-0.5, -0.5, 1), Vec3.from_xyz(0, 0.5, 1) }, .shader = .{ .perVertex = .{ .colors = .{ .{ 1, 0, 0, 0.5 }, .{ 0, 1, 0, 0.5 }, .{ 0, 0, 1, 0.5 } } } } },
     });
 }
 
-fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, shader: TriShader) !void {
+fn add_quad(len: f32, shader: TriShader) !GeosHandle {
     const half_len = len;
 
-    var t1 = Tri{
+    const t1 = Tri{
         .v = .{ Vec3.from_xyz(-half_len / 2, -half_len / 2, 0), Vec3.from_xyz(-half_len / 2, half_len / 2, 0), Vec3.from_xyz(half_len / 2, half_len / 2, 0) },
         .shader = shader,
     };
 
-    var t2 = Tri{
+    const t2 = Tri{
         .v = .{
             Vec3.from_xyz(half_len / 2, -half_len / 2, 0),
             Vec3.from_xyz(-half_len / 2, -half_len / 2, 0),
@@ -304,24 +330,20 @@ fn add_quad(pos: Vec3, len: f32, pitch_deg: f32, yaw_deg: f32, roll_deg: f32, sh
         .shader = shader,
     };
 
-    const rot = Mat33.rotation(degToRad(pitch_deg), degToRad(yaw_deg), degToRad(roll_deg));
-
-    for (&t1.v) |*v| {
-        v.* = rot.mul_vec(v.*).add(pos);
-    }
-
-    for (&t2.v) |*v| {
-        v.* = rot.mul_vec(v.*).add(pos);
-    }
-
     const g1: Geo = .{ .tri = t1 };
     const g2: Geo = .{ .tri = t2 };
 
-    try geoms.appendSlice(main.gpa, &[_]Geo{ g1, g2 });
+    const indices = try main.gpa.alloc(u32, 2);
+    indices[0] = @intCast(geos.items.len + 0);
+    indices[1] = @intCast(geos.items.len + 1);
+
+    try geos.appendSlice(main.gpa, &[_]Geo{ g1, g2 });
+
+    return .{ .indices = indices };
 }
 
 pub fn zaytrace_init() !void {
-    geoms = .empty;
+    geos = .empty;
     // geo.append(root.gpa, Sphere{.center = } );
 
     jitter_prng = .init(blk: {
@@ -336,18 +358,18 @@ pub fn zaytrace_init() !void {
 
     // try add_trongle();
 
-    try add_quad(Vec3.from_xyz(0, -0.5, 1.25), 0.75, 70, 0, 0, .{ .material = MaterialShader.new_emissive(1, 1, 1, 2) });
+    _ = (try add_quad(0.5, .{ .material = MaterialShader.new_emissive(1, 1, 1, 2) })).rotate(70, 0, 0).translate(0, -0.75, 1.25);
 
     // *CORNELL BOX MENTIONED*
-    try add_quad(Vec3.from_xyz(1, 0, 1.25), 2, 90, 0, 0, .{ .material = MaterialShader.new_diffuse(1, 0, 0) }); // left wall
-    try add_quad(Vec3.from_xyz(-1, 0, 1.25), 2, -90, 0, 0, .{ .material = MaterialShader.new_diffuse(0, 1, 0) }); // right wall
+    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(1, 0, 0) })).rotate( 90,  0,  0).translate( 1, 0, 1.25);   // left wall
+    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(0, 1, 0) })).rotate(-90,  0,  0).translate(-1, 0, 1.25);  // right wall
 
-    try add_quad(Vec3.from_xyz(0, 1, 1.25), 2, 0, 0, 90, .{ .material = MaterialShader.new_diffuse(1, 1, 1) }); // roof
-    try add_quad(Vec3.from_xyz(0, -1, 1.25), 2, 0, 0, -90, .{ .material = MaterialShader.new_diffuse(1, 1, 1) }); // floor
+    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 0,  90).translate(0,  1, 1.25);   // roof
+    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 0, -90).translate(0, -1, 1.25);  // floor
 
     // try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_emissive(0, 0, 1, 1)}); // light
 
-    try add_quad(Vec3.from_xyz(0, 0, 2.25), 2, 0, 90, 0, .{ .material = MaterialShader.new_diffuse(1, 1, 1) }); // rear wall
+    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 90,  0).translate(0,  0, 2.25);   // rear wall
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
@@ -513,7 +535,7 @@ fn zaytrace_ray(origin_geo: ?*const Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: 
     var maybe_closest_inter: ?Intersection = null;
     var maybe_closest_inter_geo: ?*Geo = null;
 
-    for (geoms.items) |*geo| {
+    for (geos.items) |*geo| {
         if (geo == origin_geo) continue;
 
         switch (geo.*) {
