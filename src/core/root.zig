@@ -396,12 +396,12 @@ fn add_square(len: f32, shader: TriShader) !GeosHandle {
 /// Cube with side length `len`, centered on (0, 0, 0).
 fn add_cube(len: f32) !GeosHandle {
     const hFaces = [6]GeosHandle {
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(1, 0, 0, 2) } )).translate( len/2,      0,      0), //  x
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 1, 0, 2) } )).translate(     0,  len/2,      0), //  y
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 0, 1, 2) } )).translate(     0,      0,  len/2), //  z
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(1, 0, 0, 2) } )).translate(-len/2,      0,      0), // -x
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 1, 0, 2) } )).translate(     0, -len/2,      0), // -y
-        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 0, 1, 2) } )).translate(     0,      0, -len/2), // -z   
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(1, 0, 0, 4) } )).rotate(  0, 90,  0).translate( len/2,      0,      0), //  x
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 1, 0, 4) } )).rotate( 90,  0,  0).translate(     0,  len/2,      0), //  y
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 0, 1, 4) } )).rotate(  0,  0,  0).translate(     0,      0,  len/2), //  z
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(1, 0, 0, 4) } )).rotate(  0,-90,  0).translate(-len/2,      0,      0), // -x
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 1, 0, 4) } )).rotate(-90,  0,  0).translate(     0, -len/2,      0), // -y
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 0, 1, 4) } )).rotate(180,  0,  0).translate(     0,      0, -len/2), // -z   
     };
 
     const consolidated = GeosHandle.consolidate(main.gpa, &hFaces);
@@ -411,6 +411,7 @@ fn add_cube(len: f32) !GeosHandle {
 
 pub fn zaytrace_init() !void {
     geos = .empty;
+    handleToGeoIdsArrayList = .empty;
     // geo.append(root.gpa, Sphere{.center = } );
 
     jitter_prng = .init(blk: {
@@ -425,20 +426,20 @@ pub fn zaytrace_init() !void {
 
     // try add_trongle();
 
-    _ = (try add_square(0.5, .{ .material = MaterialShader.new_emissive(1, 1, 1, 2) })).rotate(70, 0, 0).translate(0, -0.75, 1.25);
+    // _ = (try add_square(0.5, .{ .material = MaterialShader.new_emissive(1, 1, 1, 2) })).rotate(0, 70, 0).translate(0, -0.75, 1.25);
 
     // *CORNELL BOX MENTIONED*
-    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 0, 0) })).rotate( 90,  0,  0).translate( 1, 0, 1.25);   // left wall
-    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(0, 1, 0) })).rotate(-90,  0,  0).translate(-1, 0, 1.25);  // right wall
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 0, 0) })).rotate(  0,  90,  0).translate( 1, 0, 1.25);   // left wall
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(0, 1, 0) })).rotate(  0, -90,  0).translate(-1, 0, 1.25);  // right wall
 
-    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 0,  90).translate(0,  1, 1.25);   // roof
-    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 0, -90).translate(0, -1, 1.25);  // floor
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  90,  0,  0).translate(0,  1, 1.25);   // roof
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate( -90,  0,  0).translate(0, -1, 1.25);  // floor
 
     // try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_emissive(0, 0, 1, 1)}); // light
 
-    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 90,  0).translate(0,  0, 2.25);   // rear wall
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0,  0,  0).translate(0,  0, 2.25);   // rear wall
 
-    // _ = try add_cube(2);
+    _ = (try add_cube(0.5)).rotate(0, -70, 0).translate(0, -0.75, 1);
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {

@@ -160,28 +160,28 @@ pub const Mat33 = struct {
     }
 
     // Rotate about X-axis
-    pub fn roll(phi: f32) Mat33 {
+    pub fn pitch(theta: f32) Mat33 {
         return .{ .val = .{
             1, 0,         0,
-            0, @cos(phi), -@sin(phi),
-            0, @sin(phi), @cos(phi),
+            0, @cos(theta), -@sin(theta),
+            0, @sin(theta), @cos(theta),
         } };
     }
 
     // Rotate about Y-axis
-    pub fn pitch(theta: f32) Mat33 {
+    pub fn yaw(psi: f32) Mat33 {
         return .{ .val = .{
-            @cos(theta),  0, @sin(theta),
+            @cos(psi),  0, @sin(psi),
             0,            1, 0,
-            -@sin(theta), 0, @cos(theta),
+            -@sin(psi), 0, @cos(psi),
         } };
     }
 
     // Rotate about Z-axis
-    pub fn yaw(psi: f32) Mat33 {
+    pub fn roll(phi: f32) Mat33 {
         return .{ .val = .{
-            @cos(psi), -@sin(psi), 0,
-            @sin(psi), @cos(psi),  0,
+            @cos(phi), -@sin(phi), 0,
+            @sin(phi), @cos(phi),  0,
             0,         0,          1,
         } };
     }
