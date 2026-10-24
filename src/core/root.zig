@@ -278,14 +278,21 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) Rgbf32 {
 }
 
 var geos: std.ArrayList(Geo) = undefined;
+const GeoId = u32;
+var handleToGeoIdsArrayList: std.ArrayList([]GeoId) = undefined;
+
 const GeosHandle = struct {
-    indices: []u32,
+    val: u32,
+
+    fn resolve(self: GeosHandle) []GeoId {
+        return handleToGeoIdsArrayList.items[self.val];
+    }
 
     fn rotate(self: GeosHandle, pitch_deg: f32, yaw_deg: f32, roll_deg: f32) GeosHandle {
         const rot = Mat33.rotation(degToRad(pitch_deg), degToRad(yaw_deg), degToRad(roll_deg));
 
-        for (self.indices) |hGeo| {
-            for (&geos.items[hGeo].tri.v) |*v| {
+        for (self.resolve()) |geoId| {
+            for (&geos.items[geoId].tri.v) |*v| {
                 v.* = rot.mul_vec(v.*);
             }
         }
@@ -294,38 +301,88 @@ const GeosHandle = struct {
     }
 
     fn translate(self: GeosHandle, x: f32, y: f32, z: f32) GeosHandle {
-        for (self.indices) |hGeo| {
-            for (&geos.items[hGeo].tri.v) |*v| {
+        for (self.resolve()) |geoId| {
+            for (&geos.items[geoId].tri.v) |*v| {
                 v.* = v.add(Vec3.from_xyz(x, y, z));
             }
         }
 
         return self;
     }
+
+    fn consolidate(allocator: std.mem.Allocator, handles: []const GeosHandle) !GeosHandle {
+        var num_ids: usize = 0;
+        for (handles) |handle| num_ids += handle.resolve().len;
+        const consolidated_ids = try allocator.alloc(u32, num_ids);
+
+        var i: usize = 0;
+        for (handles) |handle| {
+            for (handle.resolve()) |geoId| {
+                consolidated_ids[i] = geoId; 
+                i += 1;
+            }
+        }
+
+        try handleToGeoIdsArrayList.append(allocator, consolidated_ids);
+
+        return .{ .val = @intCast(handleToGeoIdsArrayList.items.len - 1) };
+    }    
 };
+
+fn add_geos(geos_to_add: anytype) !GeosHandle {
+    const geo_indices = try main.gpa.alloc(GeoId, geos_to_add.len);
+    for (geo_indices, 0..) |*geo_index, i| { geo_index.* = @intCast(geos.items.len + i); }
+
+    inline for (geos_to_add) |geo_to_add| {
+        try geos.append(main.gpa, geo_to_add);
+    }
+
+    const handle_to_return = handleToGeoIdsArrayList.items.len;
+    try handleToGeoIdsArrayList.append(main.gpa, geo_indices);
+
+    return .{ .val = @intCast(handle_to_return) };
+}
 
 var jitter_prng: std.Random.DefaultPrng = undefined;
 var dither_prng: std.Random.DefaultPrng = undefined;
 
 fn add_trongle() !void {
     try geos.append(main.gpa, Geo{
-        .tri = .{ .v = .{ Vec3.from_xyz(0.5, -0.5, 1), Vec3.from_xyz(-0.5, -0.5, 1), Vec3.from_xyz(0, 0.5, 1) }, .shader = .{ .perVertex = .{ .colors = .{ .{ 1, 0, 0, 0.5 }, .{ 0, 1, 0, 0.5 }, .{ 0, 0, 1, 0.5 } } } } },
+        .tri = .{
+            .v = .{
+                Vec3.from_xyz(0.5, -0.5, 1),
+                Vec3.from_xyz(-0.5, -0.5, 1),
+                Vec3.from_xyz(0, 0.5, 1)
+            },
+            .shader = .{
+                .perVertex = .{ .colors = .{
+                    .{ 1, 0, 0, 0.5 },
+                    .{ 0, 1, 0, 0.5 },
+                    .{ 0, 0, 1, 0.5 }
+                }
+            }
+        }},
     });
 }
 
-fn add_quad(len: f32, shader: TriShader) !GeosHandle {
+/// Square with side length `len`, centered on (0, 0, 0), normal facing (0, 0, 1).
+fn add_square(len: f32, shader: TriShader) !GeosHandle {
     const half_len = len;
 
     const t1 = Tri{
-        .v = .{ Vec3.from_xyz(-half_len / 2, -half_len / 2, 0), Vec3.from_xyz(-half_len / 2, half_len / 2, 0), Vec3.from_xyz(half_len / 2, half_len / 2, 0) },
+        .v = .{
+            Vec3.from_xyz(-half_len / 2, -half_len / 2, 0),
+            Vec3.from_xyz(-half_len / 2,  half_len / 2, 0),
+            Vec3.from_xyz( half_len / 2,  half_len / 2, 0)
+        },
         .shader = shader,
     };
 
     const t2 = Tri{
         .v = .{
-            Vec3.from_xyz(half_len / 2, -half_len / 2, 0),
+            Vec3.from_xyz( half_len / 2, -half_len / 2, 0),
             Vec3.from_xyz(-half_len / 2, -half_len / 2, 0),
-            Vec3.from_xyz(half_len / 2, half_len / 2, 0),
+            Vec3.from_xyz( half_len / 2,  half_len / 2, 0),
         },
         .shader = shader,
     };
@@ -333,13 +390,23 @@ fn add_quad(len: f32, shader: TriShader) !GeosHandle {
     const g1: Geo = .{ .tri = t1 };
     const g2: Geo = .{ .tri = t2 };
 
-    const indices = try main.gpa.alloc(u32, 2);
-    indices[0] = @intCast(geos.items.len + 0);
-    indices[1] = @intCast(geos.items.len + 1);
+    return try add_geos(.{g1, g2});
+}
 
-    try geos.appendSlice(main.gpa, &[_]Geo{ g1, g2 });
+/// Cube with side length `len`, centered on (0, 0, 0).
+fn add_cube(len: f32) !GeosHandle {
+    const hFaces = [6]GeosHandle {
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(1, 0, 0, 2) } )).translate( len/2,      0,      0), //  x
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 1, 0, 2) } )).translate(     0,  len/2,      0), //  y
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 0, 1, 2) } )).translate(     0,      0,  len/2), //  z
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(1, 0, 0, 2) } )).translate(-len/2,      0,      0), // -x
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 1, 0, 2) } )).translate(     0, -len/2,      0), // -y
+        (try add_square(len, .{ .material = MaterialShader.new_emissive(0, 0, 1, 2) } )).translate(     0,      0, -len/2), // -z   
+    };
 
-    return .{ .indices = indices };
+    const consolidated = GeosHandle.consolidate(main.gpa, &hFaces);
+
+    return consolidated;
 }
 
 pub fn zaytrace_init() !void {
@@ -358,18 +425,20 @@ pub fn zaytrace_init() !void {
 
     // try add_trongle();
 
-    _ = (try add_quad(0.5, .{ .material = MaterialShader.new_emissive(1, 1, 1, 2) })).rotate(70, 0, 0).translate(0, -0.75, 1.25);
+    _ = (try add_square(0.5, .{ .material = MaterialShader.new_emissive(1, 1, 1, 2) })).rotate(70, 0, 0).translate(0, -0.75, 1.25);
 
     // *CORNELL BOX MENTIONED*
-    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(1, 0, 0) })).rotate( 90,  0,  0).translate( 1, 0, 1.25);   // left wall
-    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(0, 1, 0) })).rotate(-90,  0,  0).translate(-1, 0, 1.25);  // right wall
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 0, 0) })).rotate( 90,  0,  0).translate( 1, 0, 1.25);   // left wall
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(0, 1, 0) })).rotate(-90,  0,  0).translate(-1, 0, 1.25);  // right wall
 
-    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 0,  90).translate(0,  1, 1.25);   // roof
-    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 0, -90).translate(0, -1, 1.25);  // floor
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 0,  90).translate(0,  1, 1.25);   // roof
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 0, -90).translate(0, -1, 1.25);  // floor
 
     // try add_quad(Vec3.from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_emissive(0, 0, 1, 1)}); // light
 
-    _ = (try add_quad(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 90,  0).translate(0,  0, 2.25);   // rear wall
+    _ = (try add_square(2, .{ .material = MaterialShader.new_diffuse(1, 1, 1) })).rotate(  0, 90,  0).translate(0,  0, 2.25);   // rear wall
+
+    // _ = try add_cube(2);
 }
 
 pub fn rainbow(buf: *[main.WINDOW_HEIGHT][main.WINDOW_WIDTH]u32) void {
