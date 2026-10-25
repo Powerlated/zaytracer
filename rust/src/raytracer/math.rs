@@ -218,9 +218,9 @@ impl Mat33 {
     }
 
     pub fn rotation(pitch_theta: f32, yaw_psi: f32, roll_phi: f32) -> Mat33 {
-        return Mat33::yaw(yaw_psi)
-            .mul_mat(&Mat33::pitch(pitch_theta))
-            .mul_mat(&Mat33::roll(roll_phi));
+        return Mat33::yaw(deg_to_rad(yaw_psi))
+            .mul_mat(&Mat33::pitch(deg_to_rad(pitch_theta)))
+            .mul_mat(&Mat33::roll(deg_to_rad(roll_phi)));
     }
 
     pub fn translate(&mut self, x: f32, y: f32, z: f32) -> Mat44 {
@@ -253,3 +253,7 @@ mod tests {
 }
 
 pub type Rgbf32 = Vec3;
+
+pub const fn deg_to_rad(deg: f32) -> f32 {
+    return deg * std::f32::consts::PI / 180.;
+}

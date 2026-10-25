@@ -497,7 +497,7 @@ fn random_unit_vector() Vec3 {
 
         xyz_float = xyz_float
             / @as(@Vector(3, f32), @splat(0x1FFFFF.0))
-            - @as(@Vector(3, f32), @splat(-0.5))
+            - @as(@Vector(3, f32), @splat(0.5))
             * @as(@Vector(3, f32), @splat(2.0));
 
         const xyz_magn = @sqrt(@reduce(.Add, xyz_float * xyz_float));

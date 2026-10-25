@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
 use std::borrow::Cow;
+use wgpu::ExternalTextureFormat::Rgba;
 use wgpu::TextureFormat::Rgba8Uint;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
+use crate::raytracer::MAX_ACCUMULATE_STEPS;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
+
+use crate::raytracer::Raytracer;
 
 mod raytracer;
 
@@ -23,6 +27,9 @@ struct WgpuState {
     surface_format: wgpu::TextureFormat,
     render_pipeline: wgpu::RenderPipeline,
 
+    texture_data: Box<[u8]>,
+
+    raytracer: raytracer::Raytracer,
     // texture_bind_group: wgpu::BindGroup,
 }
 
@@ -54,10 +61,14 @@ impl WgpuState {
         let swapchain_capabilities = surface.get_capabilities(&adapter);
         let swapchain_format = swapchain_capabilities.formats[0];
 
+        /*
+        // Get preferred render format 
         let cap = surface.get_capabilities(&adapter);
-        let size = arc_window.inner_size();
         let surface_format = cap.formats[0];
-
+        */
+        
+        let size = arc_window.inner_size();
+        let surface_format = wgpu::TextureFormat::Bgra8Unorm;
         // Configure surface for the first time. WebGPU always draws to a texture,
         // just a special one for the main screen
         surface.configure(&device, &wgpu::SurfaceConfiguration {
@@ -184,7 +195,11 @@ impl WgpuState {
             surface,
             surface_format,
             render_pipeline,
-            // texture_bind_group
+
+            texture_data: vec![0u8; WINDOW_WIDTH * 4 * WINDOW_HEIGHT].into_boxed_slice(),
+            // texture_bind_group,
+
+            raytracer: Raytracer::new(),
         }
     }
 
@@ -203,6 +218,7 @@ impl WgpuState {
                 ..Default::default()
             });
 
+        /*
         // Render a solid green screen
         let mut encoder = self.device.create_command_encoder(&Default::default());
         // Create the render pass object that will clear the screen.
@@ -228,11 +244,34 @@ impl WgpuState {
 
         // Call draw commands here
 
-        // End the render pass. 
+        // End the render pass construction. 
         drop(render_pass);
 
-        // End the render pass
+        // Submit the encoded render pass to the GPU for rendering
         self.queue.submit([encoder.finish()]);
+        */
+
+        // Cast self.texture_data into properly typed 2D array
+        let u32_slice: &mut [u32] = bytemuck::cast_slice_mut(&mut self.texture_data);
+        let flat_array_ref: &mut [u32; WINDOW_WIDTH * WINDOW_HEIGHT] = u32_slice.try_into().unwrap();
+        let buffer: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT] = bytemuck::cast_mut(flat_array_ref);
+
+        let accumulated_samples = self.raytracer.raytrace_image(buffer);
+        self.arc_window.set_title(format!("Brian Jia - Raytracer [{}/{}]", accumulated_samples, MAX_ACCUMULATE_STEPS).as_str());
+
+
+        self.queue.write_texture(
+            surface_texture.texture.as_image_copy(),
+            &self.texture_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(surface_texture.texture.width() * 4),
+                rows_per_image: Some(surface_texture.texture.height()),
+            },
+            surface_texture.texture.size(),
+        );
+
+    
         self.arc_window.pre_present_notify();
         self.queue.present(surface_texture);
     }

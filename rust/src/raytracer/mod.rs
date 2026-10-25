@@ -1,12 +1,12 @@
 use std::f32::consts::PI;
 use std::ops::Div;
 
-use rand::rngs::StdRng;
+use rand::rngs::{Xoshiro128PlusPlus};
 use rand::{Rng, SeedableRng};
 
 use crate::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::raytracer::TriShader::{Material, PerVertex};
-use crate::raytracer::math::{Mat33, Mat44, Rgbf32, Vec3};
+use crate::raytracer::math::{Mat33, Mat44, Rgbf32, Vec3, deg_to_rad};
 mod math;
 
 #[derive(Clone)]
@@ -38,14 +38,14 @@ fn transform_in_place(geos: &mut [Geo], transformation: Mat44) {
                 // apply homogenous transformation
                 let a = transformation.val;
                 for v in tri.v.iter_mut() {
-                    let b = [v.val[0], v.val[1], v.val[2], 0.];
+                    let b = [v.val[0], v.val[1], v.val[2], 1.];
 
                     let mut vec_val = [0.0; 4];
                     for j in 0..4 {
                         vec_val[j] =
                             a[j * 4 + 0] * b[0] +
                             a[j * 4 + 1] * b[1] +
-                            a[j * 4 + 2] * b[2];
+                            a[j * 4 + 2] * b[2] +
                             a[j * 4 + 3] * b[3];
                     }
 
@@ -400,7 +400,7 @@ fn cube(len: f32) -> [Geo; 12] {
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
-fn random_jitter(prng: &mut StdRng) -> (f32, f32) {
+fn random_jitter(prng: &mut Xoshiro128PlusPlus) -> (f32, f32) {
     // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
     let next = prng.next_u64();
 
@@ -415,7 +415,7 @@ fn random_jitter(prng: &mut StdRng) -> (f32, f32) {
 }
 
 // 3D vector that is evenly distributed on the unit sphere
-fn random_unit_vector(prng: &mut StdRng) -> Vec3 {
+fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
     loop {
         // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
         let next = prng.next_u64();
@@ -431,7 +431,7 @@ fn random_unit_vector(prng: &mut StdRng) -> Vec3 {
 
         xyz_float = xyz_float
             .div_scalar(0x1FFFFF as f32)
-            .sub(Vec3::from_xyz(-0.5, -0.5, -0.5))
+            .sub(Vec3::from_xyz(0.5, 0.5, 0.5))
             .mul_scalar(2.0);
 
         let xyz_magn = xyz_float.magn();
@@ -443,7 +443,7 @@ fn random_unit_vector(prng: &mut StdRng) -> Vec3 {
 }
 
 // return is random value in [0, 1]
-fn random_alpha(prng: &mut StdRng) -> f32 {
+fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
     // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
     let next = prng.next_u64();
 
@@ -453,26 +453,24 @@ fn random_alpha(prng: &mut StdRng) -> f32 {
     return (int as f32) / (0xFFFFFFFFu32 as f32);
 }
 
-struct Raytracer {
-    main_prng: rand::rngs::StdRng,
-    dither_prng: rand::rngs::StdRng,
+pub struct Raytracer {
+    main_prng: rand::rngs::Xoshiro128PlusPlus,
+    dither_prng: rand::rngs::Xoshiro128PlusPlus,
     geos: Vec<Geo>,
     handleToGeoIdsArrayList: Vec<Vec<GeoId>>,
-    accumulator_buf: [[Rgbf32; WINDOW_HEIGHT]; WINDOW_WIDTH],
+    accumulator_buf: Box<[Rgbf32]>,
     accumulate_steps: u32,
 }
 
 impl Raytracer {
-    fn new(&mut self) -> Self {
-        // try add_trongle();
-
+    pub fn new() -> Self {
         let mut raytracer = Self {
             // start the PRNGs from 0 seed always
-            main_prng: rand::rngs::StdRng::seed_from_u64(0),
-            dither_prng: rand::rngs::StdRng::seed_from_u64(0),
+            main_prng: rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0),
+            dither_prng: rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0),
             geos: Vec::new(),
             handleToGeoIdsArrayList: Vec::new(),
-            accumulator_buf: [[Rgbf32::zero(); WINDOW_HEIGHT]; WINDOW_WIDTH],
+            accumulator_buf: vec![Rgbf32::zero(); WINDOW_HEIGHT * WINDOW_WIDTH as usize].into_boxed_slice(),
             accumulate_steps: 0,
         };
 
@@ -528,7 +526,7 @@ impl Raytracer {
     }
 
     fn update_and_dither_output_buffer(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
-        self.dither_prng = rand::rngs::StdRng::seed_from_u64(0);
+        self.dither_prng = rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0);
 
         for (row, row_pixels) in buf.iter_mut().enumerate() {
             for (col, px) in row_pixels.iter_mut().enumerate() {
@@ -538,9 +536,9 @@ impl Raytracer {
                 // get bottom half to get a 32-bit var where each bit is I.I.D.
                 let int = next & 0xFFFFFFFF;
                 let uniform_rect_dist =
-                    (int as f32) / (0xFFFFFFFFu32 as f32) - 0.5 * (1. / DITHER_DIVISOR as f32);
+                    ((int as f32) / (0xFFFFFFFFu32 as f32) - 0.5) * (1. / (DITHER_DIVISOR as f32));
 
-                let dithered = self.accumulator_buf[row][col].add(Rgbf32 {val: [
+                let dithered = self.accumulator_buf[row * WINDOW_WIDTH + col].add(Rgbf32 {val: [
                     uniform_rect_dist,
                     uniform_rect_dist,
                     uniform_rect_dist,
@@ -551,7 +549,7 @@ impl Raytracer {
         }
     }
 
-    pub fn zaytrace_image(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) -> u32 {
+    pub fn raytrace_image(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) -> u32 {
         if self.accumulate_steps < MAX_ACCUMULATE_STEPS  {
             // **First, trace one ray per pixel, and then update the accumulator
             // buffer with the cumulative average.**
@@ -571,7 +569,7 @@ impl Raytracer {
                     // perform antialiasing accumulate
                     // https://en.wikipedia.org/wiki/Moving_average#Cumulative_average
                     let new_px = self.zaytrace_image_inner(norm_x, norm_y);
-                    let acc_px = &mut self.accumulator_buf[row][col];
+                    let acc_px = &mut self.accumulator_buf[row * WINDOW_WIDTH + col];
                     *acc_px = new_px.add(acc_px.mul_scalar(self.accumulate_steps as f32))
                         .div((self.accumulate_steps + 1) as f32);
                 }
@@ -643,7 +641,7 @@ impl Raytracer {
                                             continue;
                                         }
                                     },
-                                    _ => unimplemented!()
+                                    _ => {}
                                 }
                             }
 
@@ -772,10 +770,5 @@ pub fn rainbow(buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
     }
 }
 
-const MAX_ACCUMULATE_STEPS: u32 = 1024;
+pub const MAX_ACCUMULATE_STEPS: u32 = 1024;
 const DITHER_DIVISOR: usize = 256;
-
-const fn deg_to_rad(deg: f32) -> f32 {
-    return deg * PI / 180.;
-}
-
