@@ -502,7 +502,7 @@ fn random_unit_vector() Vec3 {
 
         const xyz_magn = @sqrt(@reduce(.Add, xyz_float * xyz_float));
         
-        if (xyz_magn <= 1) {
+        if (xyz_magn <= 1 and xyz_magn > 0.01) {
             return (Vec3 {.val = xyz_float}).normalize();
         }
     }
