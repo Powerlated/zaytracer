@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
 use std::borrow::Cow;
-use wgpu::ExternalTextureFormat::Rgba;
-use wgpu::TextureFormat::Rgba8Uint;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use crate::raytracer::MAX_ACCUMULATE_STEPS;

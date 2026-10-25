@@ -93,7 +93,7 @@ struct Intersection<'a> {
 struct Tri {
     // Vertices. typical notation in math is (A, B, C)
     v: [Vec3; 3],
-    shader: Option<TriShader>,
+    shader: TriShader,
     // TODO: derive normal direction from winding order?
     // n: Vec3, // n^\hat is normalized normal vector
 }
@@ -185,7 +185,7 @@ impl Tri {
 
 #[cfg(test)]
 mod test {
-    use crate::raytracer::{Tri, math::Vec3};
+    use crate::raytracer::{MaterialShader, Tri, TriShader, math::Vec3};
 
     const EPSILON: f32 = 1e-5;
     fn expect_intersect(tri: Tri, o: Vec3, d: Vec3, intersect_pos: [f32; 3], t: f32) {
@@ -207,12 +207,16 @@ mod test {
         assert!(maybe_ti.is_none());
     }
 
+    fn basic_shader() -> TriShader {
+        TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))
+    }
+
     #[test]
     fn intersection_1() {
         let ray_pos = Vec3::from_xyz(0., 0., 0.);
         let ray_dir = Vec3::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-1., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(-1., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: basic_shader() };
 
         expect_intersect(tri, ray_pos, ray_dir, [0., 0., 1.], 1.);
     }
@@ -222,7 +226,7 @@ mod test {
         let ray_pos = Vec3::from_xyz(5., 0., 0.);
         let ray_dir = Vec3::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-10., -1., 1.), Vec3::from_xyz(10., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(-10., -1., 1.), Vec3::from_xyz(10., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: basic_shader() };
 
         expect_intersect(tri, ray_pos, ray_dir, [5., 0., 1.], 1.);
     }
@@ -232,9 +236,9 @@ mod test {
         let ray_pos = Vec3::from_xyz(0., 0., 0.);
         let ray_dir = Vec3::from_xyz(1., 0., 1.).normalize();
 
-        let tri = Tri { v: [Vec3::from_xyz(-10., -100., 1.), Vec3::from_xyz(100., -100., 1.), Vec3::from_xyz(0., 100., 1.)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(-10., -100., 1.), Vec3::from_xyz(100., -100., 1.), Vec3::from_xyz(0., 100., 1.)], shader: basic_shader() };
 
-        let tri2 = Tri { v: [Vec3::from_xyz(-10., -100., 2.), Vec3::from_xyz(100., -100., 2.), Vec3::from_xyz(0., 100., 2.)], shader: None };
+        let tri2 = Tri { v: [Vec3::from_xyz(-10., -100., 2.), Vec3::from_xyz(100., -100., 2.), Vec3::from_xyz(0., 100., 2.)], shader: basic_shader() };
 
         expect_intersect(tri, ray_pos, ray_dir, [1., 0., 1.], f32::sqrt(2.));
         expect_intersect(tri2, ray_pos, ray_dir, [2., 0., 2.], f32::sqrt(2.));
@@ -245,7 +249,7 @@ mod test {
         let ray_pos = Vec3::from_xyz(0., 0., 0.);
         let ray_dir = Vec3::from_xyz(0., 1., -1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-1., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(-1., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: basic_shader() };
 
         expect_no_intersect(tri, ray_pos, ray_dir);
     }
@@ -255,7 +259,7 @@ mod test {
         let ray_pos = Vec3::from_xyz(5., 0., 0.);
         let ray_dir = Vec3::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-10., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(-10., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: basic_shader() };
 
         expect_no_intersect(tri, ray_pos, ray_dir);
     }
@@ -265,7 +269,7 @@ mod test {
         let ray_pos = Vec3::from_xyz(1., -1., 0.);
         let ray_dir = Vec3::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(0.5, 0.5, 1.), Vec3::from_xyz(-0.5, 0.5, 1.), Vec3::from_xyz(0., -0.5, 1.)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(0.5, 0.5, 1.), Vec3::from_xyz(-0.5, 0.5, 1.), Vec3::from_xyz(0., -0.5, 1.)], shader: basic_shader() };
 
         expect_no_intersect(tri, ray_pos, ray_dir);
     }
@@ -331,13 +335,13 @@ fn trongle() -> Geo {
                 Vec3::from_xyz(-0.5, -0.5, 1.),
                 Vec3::from_xyz(0., 0.5, 1.)
             ],
-            shader: Some(TriShader::PerVertex(
+            shader: TriShader::PerVertex(
                 TriPerVertexShader { colors: [
                     [ 1., 0., 0., 0.5 ],
                     [ 0., 1., 0., 0.5 ],
                     [ 0., 0., 1., 0.5 ]
                 ]}
-            ))
+            )
         },
     )
 }
@@ -352,7 +356,7 @@ fn square(len: f32, shader: TriShader) -> [Geo; 2] {
             Vec3::from_xyz(-half_len / 2.,  half_len / 2., 0.),
             Vec3::from_xyz( half_len / 2.,  half_len / 2., 0.)
         ],
-        shader: Some(shader.clone()),
+        shader: shader.clone(),
     };
 
     let t2 = Tri {
@@ -361,7 +365,7 @@ fn square(len: f32, shader: TriShader) -> [Geo; 2] {
             Vec3::from_xyz(-half_len / 2., -half_len / 2., 0.),
             Vec3::from_xyz( half_len / 2.,  half_len / 2., 0.),
         ],
-        shader: Some(shader.clone()),
+        shader: shader.clone(),
     };
 
     let g1 = Geo::Tri(t1);
@@ -627,8 +631,7 @@ impl Raytracer {
                         if inter.t < closest_inter_t  {
                             // TODO: alpha only applies to direct rays so far. add separate indirect/direct bounce settings
                             if bounces == 0  {
-                                let shader = tri.shader.as_ref().unwrap();
-                                match shader {
+                                match &tri.shader {
                                     PerVertex(per_vertex) => {
                                         let w = tri_inter.w;
                                         let v = tri_inter.v;
@@ -660,8 +663,7 @@ impl Raytracer {
             match geo {
                 IntersectionGeo::Tri(tri_inter) => {
                     let tri = tri_inter.tri;
-                    let shader = tri.shader.as_ref().unwrap();
-                    match shader {
+                    match &tri.shader {
                         PerVertex(per_vertex) => {
                             // currently this is emissive
                             let w = tri_inter.w;
@@ -715,6 +717,7 @@ impl Raytracer {
                                 // shift that point 1 unit away from the hit point along the normal vector
                                 let point_on_sphere_shifted = point_on_sphere.add(n);
                                 let lambertian_ray_dir = point_on_sphere_shifted.sub(closest_inter.p).normalize();
+                                // lambertian_ray_dir now should have a lambertian distribution
 
                                 // assert(bounce_dir.dot(n) > 0);
                                 return material.color
