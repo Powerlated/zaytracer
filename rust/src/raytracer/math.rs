@@ -1,4 +1,4 @@
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Vec3 {
     pub val: [f32; 3]
 }
@@ -222,7 +222,23 @@ impl Mat33 {
             .mul_mat(&Mat33::pitch(pitch_theta))
             .mul_mat(&Mat33::roll(roll_phi));
     }
+
+    pub fn translate(&mut self, x: f32, y: f32, z: f32) -> Mat44 {
+        let a = self.val;
+        return Mat44 { val: [
+            a[0], a[1], a[2],  x,
+            a[3], a[4], a[5],  y,
+            a[6], a[7], a[8],  z,
+              0.,   0.,   0., 1.,
+        ]};
+    }
 }
+
+#[derive(Clone, Copy)]
+pub struct Mat44 {
+    pub val: [f32; 16]
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -231,7 +247,7 @@ mod tests {
     #[test]
     fn identity_is_identity() {
         let vec = Vec3::from_xyz(1.0, 2.0, 3.0);
-        let transformed = Mat33::ident().mul_vec(&vec);
+        let transformed = Mat33::ident().mul_vec(vec);
         assert_eq!(vec.val, transformed.val);
     }
 }
