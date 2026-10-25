@@ -1,11 +1,15 @@
+use std::f32::consts::PI;
 use std::ops::Div;
+use std::sync::Arc;
 
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
-use crate::raytracer::TriShader::PerVertex;
+use crate::{WINDOW_HEIGHT, WINDOW_WIDTH};
+use crate::raytracer::TriShader::{Material, PerVertex};
 use crate::raytracer::math::{Rgbf32, Mat33, Vec3};
 mod math;
 
+#[derive(Clone)]
 struct MaterialShader {
     color: Rgbf32,
     emission: f32,
@@ -21,26 +25,29 @@ impl MaterialShader {
     }
 }
 
-
+#[derive(Clone)]
 enum Geo {
     Tri(Tri),
     // sphere: Sphere,
 }
 
+#[derive(Clone)]
 enum TriShader {
     PerVertex(TriPerVertexShader),
     Material(MaterialShader),
 }
 
+#[derive(Clone)]
 struct TriPerVertexShader {
     // Per-vertex color
-    colors: [Rgbf32; 3],
+    colors: [[f32; 4]; 3],
 }
 
 struct TriIntersection {
     w: f32,
     u: f32,
     v: f32,
+    common: Intersection
 }
 
 enum IntersectionGeo {
@@ -52,9 +59,9 @@ struct Intersection {
     p: Vec3, // Point of intersection
     n: Vec3, // Normalized normal vector of intersection surface
     t: f32, // t value of intersection
-    geo: IntersectionGeo,
 }
 
+#[derive(Clone)]
 struct Tri {
     // Vertices. typical notation in math is (A, B, C)
     v: [Vec3; 3],
@@ -68,7 +75,7 @@ impl Tri {
     // `O`: Origin point
     // `D`: Direction vector
     #[allow(non_snake_case)]
-    fn intersect(self: &Tri, O: Vec3, D: Vec3) -> Option<Intersection> {
+    fn intersect(self: &Tri, O: Vec3, D: Vec3) -> Option<TriIntersection> {
         let v1 = self.v[0];
         let v2 = self.v[1];
         let v3 = self.v[2];
@@ -140,7 +147,7 @@ impl Tri {
         // Obtain intersection point, from the definition of barycentric coordinates
         let P = v1.mul_scalar(w).add(v2.mul_scalar(u)).add(v3.mul_scalar(v));
 
-        return Some(Intersection { p: P, n: n.normalize(), t: t, geo: IntersectionGeo::Tri(TriIntersection { w, u, v })});
+        return Some(TriIntersection { w, u, v, common: Intersection { p: P, n: n.normalize(), t: t} });
     }
 }
 
@@ -173,9 +180,9 @@ mod test {
         let ray_pos = Vec3::from_xyz(0., 0., 0.);
         let ray_dir = Vec3::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-1, -1, 1), Vec3::from_xyz(1, -1, 1), Vec3::from_xyz(0, 1, 1)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(-1., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: None };
 
-        expect_intersect(tri, ray_pos, ray_dir, [0, 0, 1], 1);
+        expect_intersect(tri, ray_pos, ray_dir, [0., 0., 1.], 1.);
     }
 
     #[test]
@@ -183,9 +190,9 @@ mod test {
         let ray_pos = Vec3::from_xyz(5., 0., 0.);
         let ray_dir = Vec3::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-10, -1, 1), Vec3::from_xyz(10, -1, 1), Vec3::from_xyz(0, 1, 1)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(-10., -1., 1.), Vec3::from_xyz(10., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: None };
 
-        expect_intersect(tri, ray_pos, ray_dir, [5, 0, 1], 1);
+        expect_intersect(tri, ray_pos, ray_dir, [5., 0., 1.], 1.);
     }
 
     #[test]
@@ -193,42 +200,42 @@ mod test {
         let ray_pos = Vec3::from_xyz(0., 0., 0.);
         let ray_dir = Vec3::from_xyz(1., 0., 1.).normalize();
 
-        let tri = Tri { v: [Vec3::from_xyz(-10, -100, 1), Vec3::from_xyz(100, -100, 1), Vec3::from_xyz(0, 100, 1)], shader: None };
+        let tri = Tri { v: [Vec3::from_xyz(-10., -100., 1.), Vec3::from_xyz(100., -100., 1.), Vec3::from_xyz(0., 100., 1.)], shader: None };
 
-        let tri2 = Tri { v: [Vec3::from_xyz(-10, -100, 2), Vec3::from_xyz(100, -100, 2), Vec3::from_xyz(0, 100, 2)], shader: None };
+        let tri2 = Tri { v: [Vec3::from_xyz(-10., -100., 2.), Vec3::from_xyz(100., -100., 2.), Vec3::from_xyz(0., 100., 2.)], shader: None };
 
-        expect_intersect(tri, ray_pos, ray_dir, [1, 0, 1], f32::sqrt(2));
-        expect_intersect(tri2, ray_pos, ray_dir, [2, 0, 2], f32::sqrt(2.0));
+        expect_intersect(tri, ray_pos, ray_dir, [1., 0., 1.], f32::sqrt(2.));
+        expect_intersect(tri2, ray_pos, ray_dir, [2., 0., 2.], f32::sqrt(2.));
     }
 
     #[test]
     fn non_intersection_1() {
-        let ray_pos = Vec3::from_xyz(0, 0, 0);
-        let ray_dir = Vec3::from_xyz(0, 1, -1);
+        let ray_pos = Vec3::from_xyz(0., 0., 0.);
+        let ray_dir = Vec3::from_xyz(0., 1., -1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-1, -1, 1), Vec3::from_xyz(1, -1, 1), Vec3::from_xyz(0, 1, 1)] };
+        let tri = Tri { v: [Vec3::from_xyz(-1., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: None };
 
-        TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+        expect_no_intersect(tri, ray_pos, ray_dir);
     }
 
     #[test]
     fn non_intersection_2() {
-        let ray_pos = Vec3::from_xyz(5, 0, 0);
-        let ray_dir = Vec3::from_xyz(0, 0, 1);
+        let ray_pos = Vec3::from_xyz(5., 0., 0.);
+        let ray_dir = Vec3::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-10, -1, 1), Vec3::from_xyz(1, -1, 1), Vec3::from_xyz(0, 1, 1)] };
+        let tri = Tri { v: [Vec3::from_xyz(-10., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: None };
 
-        TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+        expect_no_intersect(tri, ray_pos, ray_dir);
     }
 
     #[test]
     fn non_intersection_3() {
-        let ray_pos = Vec3::from_xyz(1, -1, 0);
-        let ray_dir = Vec3::from_xyz(0, 0, 1);
+        let ray_pos = Vec3::from_xyz(1., -1., 0.);
+        let ray_dir = Vec3::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(0.5, 0.5, 1), Vec3::from_xyz(-0.5, 0.5, 1), Vec3::from_xyz(0, -0.5, 1)] };
+        let tri = Tri { v: [Vec3::from_xyz(0.5, 0.5, 1.), Vec3::from_xyz(-0.5, 0.5, 1.), Vec3::from_xyz(0., -0.5, 1.)], shader: None };
 
-        TriTestHelpers.expect_no_intersect(tri, ray_pos, ray_dir);
+        expect_no_intersect(tri, ray_pos, ray_dir);
     }
 }
 
@@ -238,7 +245,7 @@ struct Sphere {
 }
 
 /// Linearly maps a value from a source range to a target range
-fn mapRange<T: std::ops::Add + std::ops::Sub + std::ops::Div>(s: T, a1: T, a2: T, b1: T, b2: T) -> T {
+fn map_range(s: f32, a1: f32, a2: f32, b1: f32, b2: f32) -> f32 {
     return b1 + (s - a1) * (b2 - b1) / (a2 - a1);
 }
 
@@ -246,15 +253,15 @@ fn mapRange<T: std::ops::Add + std::ops::Sub + std::ops::Div>(s: T, a1: T, a2: T
 /// s: [0, 1]
 /// v: [0, 1]
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgbf32 {
-    assert!(h >= 0 && h < 360);
-    assert!(s >= 0 && s <= 1);
-    assert!(v >= 0 && v <= 1);
+    assert!(h >= 0. && h < 360.);
+    assert!(s >= 0. && s <= 1.);
+    assert!(v >= 0. && v <= 1.);
 
     // calculate chroma
     let c = v * s;
 
     // calculate secondary color component
-    let x = c * (1 - f32::abs((h / 60) % 2) - 1);
+    let x = c * (1. - f32::abs((h / 60.) % 2.) - 1.);
 
     // calculate match value
     let m = v - c;
@@ -262,460 +269,486 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgbf32 {
     // r', g', b'
     let p: Vec3;
 
-    if (h < 60) {
-        p = Vec3::from_xyz(c, x, 0);
-    } else if (h < 120) {
-        p = Vec3::from_xyz(x, c, 0);
-    } else if (h < 180) {
-        p = Vec3::from_xyz(0, c, x);
-    } else if (h < 240) {
-        p = Vec3::from_xyz(0, x, c);
-    } else if (h < 300) {
-        p = Vec3::from_xyz(x, 0, c);
+    if (h < 60.) {
+        p = Vec3::from_xyz(c, x, 0.);
+    } else if (h < 120.) {
+        p = Vec3::from_xyz(x, c, 0.);
+    } else if (h < 180.) {
+        p = Vec3::from_xyz(0., c, x);
+    } else if (h < 240.) {
+        p = Vec3::from_xyz(0., x, c);
+    } else if (h < 300.) {
+        p = Vec3::from_xyz(x, 0., c);
     } else {
-        p = Vec3::from_xyz(c, 0, x);
+        p = Vec3::from_xyz(c, 0., x);
     }
 
-    return Rgbf32 { val: p.add(Vec3::splat(m)) };
+    return p.add(Vec3::from_xyz(m, m, m));
 }
 
-static geos: Vec<Geo> = Vec::new();
-type GeoId = u32;
-static handleToGeoIdsArrayList: Vec<Vec<GeoId>> = Vec::new();
+type GeoId = usize;
 
 struct GeosHandle {
-    val: u32,
+    val: usize,
 }
 
-impl GeosHandle {
-    fn resolve(self: GeosHandle) -> &Vec<GeoId> {
-        return handleToGeoIdsArrayList.items[self.val];
+struct Raytracer {
+    main_prng: rand::rngs::StdRng,
+    dither_prng: rand::rngs::StdRng,
+    geos: Vec<Geo>,
+    handleToGeoIdsArrayList: Vec<Vec<GeoId>>,
+    accumulator_buf: [[Rgbf32; WINDOW_HEIGHT]; WINDOW_WIDTH],
+    accumulate_steps: u32,
+}
+
+impl Raytracer {
+    fn new(&mut self) -> Self {
+        // try add_trongle();
+
+        let mut raytracer = Self {
+            // start the PRNGs from 0 seed always
+            main_prng: rand::rngs::StdRng::seed_from_u64(0),
+            dither_prng: rand::rngs::StdRng::seed_from_u64(0),
+            geos: Vec::new(),
+            handleToGeoIdsArrayList: Vec::new(),
+            accumulator_buf: [[Rgbf32::zero(); WINDOW_HEIGHT]; WINDOW_WIDTH],
+            accumulate_steps: 0,
+        };
+
+        raytracer.add_square(1., TriShader::Material(MaterialShader::new_emissive(1., 1., 1., 4.))).rotate(90., 0., 0.).translate(0., 0.999, 1.);
+
+        // *CORNELL BOX MENTIONED*
+        raytracer.add_square(2., TriShader::Material(MaterialShader::new_diffuse(1., 0., 0.))).rotate(  0.,  90.,  0.).translate( 1., 0., 1.25);   // left wall
+        raytracer.add_square(2., TriShader::Material(MaterialShader::new_diffuse(0., 1., 0.))).rotate(  0., -90.,  0.).translate(-1., 0., 1.25);  // right wall
+
+        raytracer.add_square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate(  90.,  0.,  0.).translate(0.,  1., 1.25);   // roof
+        raytracer.add_square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate( -90.,  0.,  0.).translate(0., -1., 1.25);  // floor
+
+        // try add_quad(Vec3::from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader::new_emissive(0, 0, 1, 1)}); // light
+
+        raytracer.add_square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate(  0.,  0.,  0.).translate(0.,  0., 2.25);   // rear wall
+
+        raytracer.add_cube(0.5).rotate(0., -70., 0.).translate(-0.25, -0.75, 1.25);
+
+        raytracer
     }
 
-    fn rotate(self: GeosHandle, pitch_deg: f32, yaw_deg: f32, roll_deg: f32) -> GeosHandle {
-        let rot = Mat33.rotation(degToRad(pitch_deg), degToRad(yaw_deg), degToRad(roll_deg));
+    fn add_geos(&mut self, geos_to_add: &[Geo]) -> GeosHandle {
+        let mut geo_indices = Vec::with_capacity(geos_to_add.len());
+        for (i, _) in geos_to_add.iter().enumerate() { 
+            geo_indices.push(self.geos.len() + i); 
+        }
 
-        for geoId in self.resolve() {
-            for v in &geos.items[geoId].tri.v {
-                *v = rot.mul_vec(*v);
+        for geo_to_add in geos_to_add {
+            self.geos.push((*geo_to_add).clone());
+        }
+
+        let handle_to_return = self.handleToGeoIdsArrayList.len();
+        self.handleToGeoIdsArrayList.push(geo_indices);
+
+        return GeosHandle { val: handle_to_return };
+    }
+
+    fn add_trongle(&mut self) {
+        self.geos.push(Geo::Tri(Tri {
+                v: [
+                    Vec3::from_xyz(0.5, -0.5, 1.),
+                    Vec3::from_xyz(-0.5, -0.5, 1.),
+                    Vec3::from_xyz(0., 0.5, 1.)
+                ],
+                shader: Some(TriShader::PerVertex(
+                    TriPerVertexShader { colors: [
+                        [ 1., 0., 0., 0.5 ],
+                        [ 0., 1., 0., 0.5 ],
+                        [ 0., 0., 1., 0.5 ]
+                    ]}
+                ))
+            },
+        ));
+    }
+
+    /// Square with side length `len`, centered on (0, 0, 0), normal facing (0, 0, 1).
+    fn add_square(&mut self, len: f32, shader: TriShader) -> GeosHandle {
+        let half_len = len;
+
+        let t1 = Tri {
+            v: [
+                Vec3::from_xyz(-half_len / 2., -half_len / 2., 0.),
+                Vec3::from_xyz(-half_len / 2.,  half_len / 2., 0.),
+                Vec3::from_xyz( half_len / 2.,  half_len / 2., 0.)
+            ],
+            shader: Some(shader.clone()),
+        };
+
+        let t2 = Tri {
+            v: [
+                Vec3::from_xyz( half_len / 2., -half_len / 2., 0.),
+                Vec3::from_xyz(-half_len / 2., -half_len / 2., 0.),
+                Vec3::from_xyz( half_len / 2.,  half_len / 2., 0.),
+            ],
+            shader: Some(shader.clone()),
+        };
+
+        let g1 = Geo::Tri(t1);
+        let g2 = Geo::Tri(t2);
+
+        return self.add_geos(&[g1, g2]);
+    }
+        
+    /// Cube with side length `len`, centered on (0, 0, 0).
+    fn add_cube(&mut self, len: f32) -> GeosHandle {
+        let h_faces = [
+            self.add_square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate(  0., -90.,  0.).translate( len/2.,      0.,      0.), //  x
+            self.add_square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate(-90.,   0.,  0.).translate(     0.,  len/2.,      0.), //  y
+            self.add_square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate(  0.,   0.,  0.).translate(     0.,      0.,  len/2.), //  z
+            self.add_square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate(  0.,  90.,  0.).translate(-len/2.,      0.,      0.), // -x
+            self.add_square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate( 90.,   0.,  0.).translate(     0., -len/2.,      0.), // -y
+            self.add_square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))).rotate(180.,   0.,  0.).translate(     0.,      0., -len/2.), // -z   
+        ];
+
+        let consolidated = GeosHandle::consolidate(&h_faces);
+
+        return consolidated;
+    }
+
+    // 2-tuple with each entry being random value in [-0.5, 0.5]
+    // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
+    fn random_jitter(&mut self) -> (f32, f32) {
+        // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
+        let next = self.main_prng.next_u64();
+
+        // split it in half to get two 32-bit vars where each bit is I.I.D.
+        let x_jitter_int = next & 0xFFFFFFFF;
+        let y_jitter_int = (next >> 32) & 0xFFFFFFFF;
+
+        return (
+            (x_jitter_int as f32) / (0xFFFFFFFF as f32) - 0.5,
+            (y_jitter_int as f32) / (0xFFFFFFFF as f32) - 0.5,
+        )
+    }
+
+    // 3D vector that is evenly distributed on the unit sphere
+    fn random_unit_vector(&mut self) -> Vec3 {
+        loop {
+            // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
+            let next = self.main_prng.next_u64();
+
+            // split it in three to get three 21-bit vars where each bit is I.I.D.
+            let xyz_int: [u64; 3] = [next & 0x1FFFFF,
+                                    (next >> 21) & 0x1FFFFF,
+                                    (next >> 42) & 0x1FFFFF];
+
+            let mut xyz_float = Vec3::from_xyz(xyz_int[0] as f32,
+                                               xyz_int[1] as f32,
+                                               xyz_int[2] as f32);
+
+            xyz_float = xyz_float
+                .div_scalar(0x1FFFFF as f32)
+                .sub(Vec3::from_xyz(-0.5, -0.5, -0.5))
+                .mul_scalar(2.0);
+
+            let xyz_magn = xyz_float.magn();
+            
+            if (xyz_magn <= 1.0 && xyz_magn > 0.01) {
+                return xyz_float.normalize();
+            }
+        }
+    }
+
+    fn update_and_dither_output_buffer(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
+        self.dither_prng = rand::rngs::StdRng::seed_from_u64(0);
+
+        for (row, row_pixels) in buf.iter_mut().enumerate() {
+            for (col, px) in row_pixels.iter_mut().enumerate() {
+                // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
+                let next = self.dither_prng.next_u64();
+
+                // get bottom half to get a 32-bit var where each bit is I.I.D.
+                let int = next & 0xFFFFFFFF;
+                let uniform_rect_dist =
+                    (int as f32) / (0xFFFFFFFF as f32) - 0.5 * (1. / DITHER_DIVISOR as f32);
+
+                let mut dithered = self.accumulator_buf[row][col].add(Rgbf32 {val: [
+                    uniform_rect_dist,
+                    uniform_rect_dist,
+                    uniform_rect_dist,
+                ]});
+
+                *px = dithered.to_argb8888(1.);
+            }
+        }
+    }
+
+    // return is random value in [0, 1]
+    fn random_alpha(&mut self) -> f32 {
+        // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
+        let next = self.main_prng.next_u64();
+
+        // split it in half to get two 32-bit vars where each bit is I.I.D.
+        let int = next & 0xFFFFFFFF;
+
+        return (int as f32) / (0xFFFFFFFF as f32);
+    }
+
+    pub fn zaytrace_image(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) -> u32 {
+        if (self.accumulate_steps < MAX_ACCUMULATE_STEPS) {
+            // **First, trace one ray per pixel, and then update the accumulator
+            // buffer with the cumulative average.**
+            for (row, row_pixels) in buf.iter_mut().enumerate() {
+                // map row to normalized y coordinates
+                //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
+                //      and z points into the screen, away from the viewer.)
+
+                for (col, _) in row_pixels.iter_mut().enumerate() {
+                    let jitter = self.random_jitter();
+                    let row_jittered = (row as f32) + jitter.0;
+                    let col_jittered = (col as f32) + jitter.1;
+
+                    let norm_y = map_range(row_jittered, 0., WINDOW_HEIGHT as f32, -1., 1.);
+                    let norm_x = map_range(col_jittered, 0., WINDOW_WIDTH as f32, -1., 1.);
+
+                    // perform antialiasing accumulate
+                    // https://en.wikipedia.org/wiki/Moving_average#Cumulative_average
+                    let new_px = self.zaytrace_image_inner(norm_x, norm_y);
+                    let acc_px = &mut self.accumulator_buf[row][col];
+                    *acc_px = new_px.add(acc_px.mul_scalar(self.accumulate_steps as f32))
+                        .div((self.accumulate_steps + 1) as f32);
+                }
+            }
+
+            // **Then, update the output buffer while dithering it.**
+            self.update_and_dither_output_buffer(buf);
+
+            self.accumulate_steps += 1;
+        }
+
+        return self.accumulate_steps;
+    }
+
+    // `norm_x` and `norm_y` are Vulkan-style normalized
+    // device coordinates, where the top left of the screen
+    // is (-1, -1) and the bottom right is (1, 1).
+    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Rgbf32 {
+        // Flip y to make y up
+        let norm_y = flipped_norm_y * -1.;
+
+        // **Perspective Projection**
+        const FOV_HORIZONTAL_RAD: f32 = deg_to_rad(35.);
+
+        // Given a projection plane 1 unit ahead of the camera,
+        // how far away from the center of the plane are the
+        // left/right (x_outer_bound) and top/bottom (y_outer_bound) edges?
+        let x_outer_bound = f32::tan(FOV_HORIZONTAL_RAD);
+        let y_outer_bound = x_outer_bound * ((WINDOW_HEIGHT as f32) / (WINDOW_WIDTH as f32));
+
+        let x_dir_unnormalized = norm_x * x_outer_bound;
+        let y_dir_unnormalized = norm_y * y_outer_bound;
+
+        let ray_pos = Vec3::from_xyz(0., 0., -2.);
+        let ray_dir = Vec3::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.).normalize();
+
+        return self.zaytrace_ray(None, ray_pos, ray_dir, 0);
+    }
+
+    // **Inner raytracing loop** :D
+    const MAX_BOUNCES: u8 = 16;
+    fn zaytrace_ray(&mut self, maybe_origin_geo: Option<&Geo>, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Rgbf32 {
+        if (bounces > Self::MAX_BOUNCES) { return Rgbf32::from_rgb_f32(0., 0., 0.); }
+
+        let closest_inter_t: f32 = 1000.0;
+        let maybe_closest_inter: Option<Intersection> = None;
+        let maybe_closest_inter_geo: Option<&Geo> = None;
+
+        for geo in self.geos {
+            if let Some(origin_geo) = maybe_origin_geo && std::ptr::eq(origin_geo, &geo) { continue };
+
+            match (geo) {
+                Geo::Tri(tri) => {
+                    if let Some(inter) = tri.intersect(ray_pos, ray_dir) {
+                        if (inter.common.t < closest_inter_t) {
+                            // TODO: alpha only applies to direct rays so far. add separate indirect/direct bounce settings
+                            if (bounces == 0) {
+                                let shader = tri.shader.unwrap();
+                                match shader {
+                                    PerVertex(per_vertex) => {
+                                        let w = inter.w;
+                                        let v = inter.v;
+                                        let u = inter.u;
+
+                                        let colors = per_vertex.colors;
+                                        let a = w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
+
+                                        if (a > self.random_alpha()) {
+                                            continue;
+                                        }
+                                    },
+                                    _ => unimplemented!()
+                                }
+                            }
+
+                            closest_inter_t = inter.common.t;
+                            maybe_closest_inter = Some(inter.common);
+                            maybe_closest_inter_geo = Some(&geo);
+                        }
+                    }
+                },
+                _ => unimplemented!()
             }
         }
 
-        return self;
-    }
+        if let Some(closest_inter) = maybe_closest_inter {
+            if let Some(geo) = maybe_closest_inter_geo {
+                match geo {
+                    Geo::Tri(tri) => {
+                        let shader = tri.shader.unwrap();
+                        match shader {
+                            PerVertex(per_vertex) => {
+                                // currently this is emissive
+                                let w = tri_inter.w;
+                                let v = tri_inter.v;
+                                let u = tri_inter.u;
 
-    fn translate(self: GeosHandle, x: f32, y: f32, z: f32) -> GeosHandle {
-        for geoId in self.resolve() {
-            for v in &geos.items[geoId].tri.v {
-                *v = *v.add(Vec3::from_xyz(x, y, z));
+                                let colors = per_vertex.colors;
+                                let r = w * colors[0][0] + v * colors[1][0] + u * colors[2][0];
+                                let g = w * colors[0][1] + v * colors[1][1] + u * colors[2][1];
+                                let b = w * colors[0][2] + v * colors[1][2] + u * colors[2][2];
+
+                                // make it much brighter if it's indirect bounce
+                                if (bounces > 0) {
+                                    return Rgbf32::from_rgb_f32(r, g, b).mul_scalar(10.);
+                                } else {
+                                    return Rgbf32::from_rgb_f32(r, g, b);
+                                }
+                            },
+                            Material(material) => {
+                                if (material.emission >= 1.) {
+                                    // Do not bounce if fully emissive
+                                    if (bounces > 0) {
+                                        return material.color.mul_scalar(material.emission);
+                                    } else {
+                                        // To avoid color clipping, don't multiply direct rays by more than 1
+                                        return material.color;
+                                    }
+                                } else {
+                                    let n = closest_inter.n;
+                                    if (n.dot(ray_dir) > 0.) {
+                                        // If normal is facing the wrong direction, flip it
+                                        n = n.mul_scalar(-1.);
+                                    }
+
+                                    // **Find orthonormal basis**
+                                    // Building an Orthonormal Basis, Revisited - Pixar
+                                    // https://jcgt.org/published/0006/01/01/
+                                    // const x = n.val[0];
+                                    // const y = n.val[1];
+                                    // const z = n.val[2];
+                                    // const sign = std.math.copysign(@as(f32, 1), z); // std.math.copysign is not the same as std.math.sign
+                                    // const a = -1.0 / (sign + z);
+                                    // const b = x * y * a;
+                                    // const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };
+                                    // const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
+                                    // now <n, b1, b2> is an orthonormal basis
+
+                                    // get a random 2D vector within the hemisphere that will bounce away from the surface
+                                    let bounce_dir = self.random_unit_vector();
+                                    if (n.dot(bounce_dir) < 0.) {
+                                        bounce_dir = bounce_dir.mul_scalar(-1.);
+                                    }
+
+                                    // cos(θ) = a ⋅ b / |a||b|, but since bounce_dir and n are unit vectors, no need to divide by |a||b|
+                                    // const lambertian_scalar = n.dot(bounce_dir);
+
+                                    // assert(bounce_dir.dot(n) > 0);
+                                    return material.color
+                                        .mul_elementwise(self.zaytrace_ray(Some(geo), closest_inter.p, bounce_dir, bounces + 1));
+                                        // .mul_scalar(lambertian_scalar);
+                                }
+                            },
+                        }
+                    },
+                }
             }
         }
 
-        return self;
+        return Rgbf32::from_rgb_f32(0., 0., 0.);
     }
 
-    fn consolidate(handles: &[GeosHandle]) -> GeosHandle {
+    fn consolidate_handles(&mut self, handles: &[GeosHandle]) -> GeosHandle {
         let mut num_ids: usize = 0;
-        for handle in handles { num_ids += handle.resolve().len; }
+        for handle in handles { num_ids += handle.resolve().len(); }
         let mut consolidated_ids = Vec::with_capacity(num_ids);
 
         let i: usize = 0;
         for handle in handles {
             for geoId in handle.resolve() {
-                consolidated_ids[i] = geoId; 
+                consolidated_ids[i] = *geoId; 
                 i += 1;
             }
         }
 
-        handleToGeoIdsArrayList.push(allocator, consolidated_ids);
+        self.handleToGeoIdsArrayList.push(consolidated_ids);
 
-        return GeosHandle { val: handleToGeoIdsArrayList.items.len - 1 };
+        return GeosHandle { val: self.handleToGeoIdsArrayList.len() - 1 };
     }    
-}
 
-fn add_geos(geos_to_add: &[Geo]) -> GeosHandle {
-    let geo_indices = Vec::with_capacity(geos_to_add.len);
-    for (geo_index, i) in geos_to_add.iter().enumerate() { 
-        geo_indices.push(geos.items.len + i); 
+    fn resolve_handle(&mut self, handle: &GeosHandle) -> &Vec<GeoId> {
+        return &self.handleToGeoIdsArrayList[handle.val];
     }
 
-    for geo_to_add in geos_to_add {
-        geos.push(geo_to_add);
-    }
+    fn rotate(&mut self, handle: &GeosHandle, pitch_deg: f32, yaw_deg: f32, roll_deg: f32) -> GeosHandle {
+        let rot = Mat33::rotation(deg_to_rad(pitch_deg), deg_to_rad(yaw_deg), deg_to_rad(roll_deg));
 
-    let handle_to_return = handleToGeoIdsArrayList.items.len;
-    handleToGeoIdsArrayList.append(main.gpa, geo_indices);
-
-    return GeosHandle { val: handle_to_return };
-}
-
-static main_prng: rand::rngs::ThreadRng = rand::SeedableRng::from_seed(0);
-static dither_prng: rand::rngs::ThreadRng = rand::SeedableRng::from_seed(0);
-
-fn add_trongle() {
-    geos.push(Geo::Tri(Tri {
-            v: [
-                Vec3::from_xyz(0.5, -0.5, 1),
-                Vec3::from_xyz(-0.5, -0.5, 1),
-                Vec3::from_xyz(0, 0.5, 1)
-            ],
-            shader: TriShader {
-                perVertex: TriPerVertexShader { colors: [
-                    [ 1, 0, 0, 0.5 ],
-                    [ 0, 1, 0, 0.5 ],
-                    [ 0, 0, 1, 0.5 ]
-                ]
-            }
-        }},
-    ));
-}
-
-/// Square with side length `len`, centered on (0, 0, 0), normal facing (0, 0, 1).
-fn add_square(len: f32, shader: TriShader) -> GeosHandle {
-    let half_len = len;
-
-    let t1 = Tri {
-        v: [
-            Vec3::from_xyz(-half_len / 2, -half_len / 2, 0),
-            Vec3::from_xyz(-half_len / 2,  half_len / 2, 0),
-            Vec3::from_xyz( half_len / 2,  half_len / 2, 0)
-        ],
-        shader: shader,
-    };
-
-    let t2 = Tri {
-        v: [
-            Vec3::from_xyz( half_len / 2, -half_len / 2, 0),
-            Vec3::from_xyz(-half_len / 2, -half_len / 2, 0),
-            Vec3::from_xyz( half_len / 2,  half_len / 2, 0),
-        ],
-        shader: shader,
-    };
-
-    let g1 = Geo { tri: t1 };
-    let g2 = Geo { tri: t2 };
-
-    return add_geos([g1, g2]);
-}
-
-/// Cube with side length `len`, centered on (0, 0, 0).
-fn add_cube(len: f32) -> GeosHandle {
-    let hFaces = [
-        add_square(len, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate(  0, -90,  0).translate( len/2,      0,      0), //  x
-        add_square(len, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate(-90,   0,  0).translate(     0,  len/2,      0), //  y
-        add_square(len, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate(  0,   0,  0).translate(     0,      0,  len/2), //  z
-        add_square(len, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate(  0,  90,  0).translate(-len/2,      0,      0), // -x
-        add_square(len, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate( 90,   0,  0).translate(     0, -len/2,      0), // -y
-        add_square(len, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate(180,   0,  0).translate(     0,      0, -len/2), // -z   
-    ];
-
-    let consolidated = GeosHandle.consolidate(&hFaces);
-
-    return consolidated;
-}
-
-pub fn zaytrace_init() {
-    // try add_trongle();
-
-    add_square(1, TriShader::Material(MaterialShader.new_emissive(1, 1, 1, 4))).rotate(90, 0, 0).translate(0, 0.999, 1);
-
-    // *CORNELL BOX MENTIONED*
-    add_square(2, TriShader::Material(MaterialShader.new_diffuse(1, 0, 0))).rotate(  0,  90,  0).translate( 1, 0, 1.25);   // left wall
-    add_square(2, TriShader::Material(MaterialShader.new_diffuse(0, 1, 0))).rotate(  0, -90,  0).translate(-1, 0, 1.25);  // right wall
-
-    add_square(2, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate(  90,  0,  0).translate(0,  1, 1.25);   // roof
-    add_square(2, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate( -90,  0,  0).translate(0, -1, 1.25);  // floor
-
-    // try add_quad(Vec3::from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader.new_emissive(0, 0, 1, 1)}); // light
-
-    add_square(2, TriShader::Material(MaterialShader.new_diffuse(1, 1, 1))).rotate(  0,  0,  0).translate(0,  0, 2.25);   // rear wall
-
-    add_cube(0.5).rotate(0, -70, 0).translate(-0.25, -0.75, 1.25);
-}
-
-pub fn rainbow(buf: &mut [[u32; main.WINDOW_WIDTH]; main.WINDOW_HEIGHT]) {
-    for (row_pixels, row) in buf.iter_mut().enumerate() {
-        // map row to normalized y coordinates
-        //     (Vulkan style, [-1, -1] xy is the top left corner of the screen)
-        let y = mapRange((row as f32), 0, main.WINDOW_HEIGHT, -1.0, 1.0);
-        for (px, col) in row_pixels.iter_mut().enumerate() {
-            let x = mapRange((col as f32), 0, main.WINDOW_WIDTH, -1.0, 1.0);
-            _ = x;
-
-            let hue_deg = mapRange(f32, y, -1, 1, 0, 360);
-            px.* = hsv_to_rgb(hue_deg, 1, 1).to_argb8888(1.0);
-        }
-    }
-}
-
-// accumulator for antialiasing
-static accumulator_buf: [[Rgbf32; main.WINDOW_HEIGHT]; main.WINDOW_WIDTH];
-static accumulate_steps: u32 = 0;
-
-const MAX_ACCUMULATE_STEPS: usize = 1024;
-
-// 2-tuple with each entry being random value in [-0.5, 0.5]
-// TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
-fn random_jitter() -> (f32, f32) {
-    // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-    let next = main_prng.next_u64();
-
-    // split it in half to get two 32-bit vars where each bit is I.I.D.
-    let x_jitter_int = next & 0xFFFFFFFF;
-    let y_jitter_int = (next >> 32) & 0xFFFFFFFF;
-
-    return (
-        (x_jitter_int as f32) / (0xFFFFFFFF as f32) - 0.5,
-        (y_jitter_int as f32) / (0xFFFFFFFF as f32) - 0.5,
-    )
-}
-
-// 3D vector that is evenly distributed on the unit sphere
-fn random_unit_vector() -> Vec3 {
-    while (true) {
-        // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-        let next = main_prng.next_u64();
-
-        // split it in three to get three 21-bit vars where each bit is I.I.D.
-        let xyz_int: [u64; 3] = [next & 0x1FFFFF,
-                                (next >> 21) & 0x1FFFFF,
-                                (next >> 42) & 0x1FFFFF];
-
-        let mut xyz_float = Vec3::from_xyz([xyz_int[0] as f32,
-                                            xyz_int[1] as f32,
-                                            xyz_int[2] as f32]);
-
-        xyz_float = xyz_float
-            .div_scalar(0x1FFFFF as f32)
-            .subtract(-0.5)
-            .mul_scalar(2.0);
-
-        let xyz_magn = xyz_float.magn();
-        
-        if (xyz_magn <= 1.0 && xyz_magn > 0.01) {
-            return (Vec3 {val: xyz_float}).normalize();
-        }
-    }
-}
-
-// return is random value in [0, 1]
-fn random_alpha() -> f32 {
-    // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-    let next = main_prng.next_u64();
-
-    // split it in half to get two 32-bit vars where each bit is I.I.D.
-    let int = next & 0xFFFFFFFF;
-
-    return (int as f32) / (0xFFFFFFFF as f32);
-}
-
-const DITHER_DIVISOR: usize = 256;
-
-fn update_and_dither_output_buffer(buf: &mut [[u32; main.WINDOW_WIDTH]; main.WINDOW_HEIGHT]) {
-    dither_prng.seed(0);
-
-    for (row_pixels, row_i) in buf.iter_mut().enumerate() {
-        for (px, col) in row_pixels.iter_mut().enumerate() {
-            // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-            let next = dither_prng.next_u64();
-
-            // get bottom half to get a 32-bit var where each bit is I.I.D.
-            let int = next & 0xFFFFFFFF;
-            let uniform_rect_dist =
-                (int as f32) / (0xFFFFFFFF as f32) - 0.5 * (1 / DITHER_DIVISOR);
-
-            let mut dithered = accumulator_buf[row][col].add(Rgbf32 {val: [
-                uniform_rect_dist,
-                uniform_rect_dist,
-                uniform_rect_dist,
-            ]});
-
-            *px = dithered.to_argb8888(1);
-        }
-    }
-}
-
-pub fn zaytrace_image(buf: &mut [[u32; main.WINDOW_WIDTH]; main.WINDOW_HEIGHT]) -> u32 {
-    if (accumulate_steps < MAX_ACCUMULATE_STEPS) {
-        // **First, trace one ray per pixel, and then update the accumulator
-        // buffer with the cumulative average.**
-        for (row_pixels, row) in buf.iter_mut().enumerate() {
-            // map row to normalized y coordinates
-            //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
-            //      and z points into the screen, away from the viewer.)
-
-            for (_, col) in row_pixels.iter_mut().enumerate() {
-                let jitter = random_jitter();
-                let row_jittered = (row as f32) + jitter.0;
-                let col_jittered = (col as f32) + jitter.1;
-
-                let norm_y = mapRange(f32, row_jittered, 0, main.WINDOW_HEIGHT, -1, 1);
-                let norm_x = mapRange(f32, col_jittered, 0, main.WINDOW_WIDTH, -1, 1);
-
-                // perform antialiasing accumulate
-                // https://en.wikipedia.org/wiki/Moving_average#Cumulative_average
-                let acc_px = &accumulator_buf[row][col];
-                let new_px = zaytrace_image_inner(norm_x, norm_y);
-                *acc_px = new_px.add(acc_px.mul_scalar(accumulate_steps as f32))
-                    .div((accumulate_steps + 1) as f32);
-            }
-        }
-
-        // **Then, update the output buffer while dithering it.**
-        update_and_dither_output_buffer(buf);
-
-        accumulate_steps += 1;
-    }
-
-    return accumulate_steps;
-}
-
-fn degToRad(deg: f32) -> f32 {
-    return deg * std.math.pi / 180;
-}
-
-// `norm_x` and `norm_y` are Vulkan-style normalized
-// device coordinates, where the top left of the screen
-// is (-1, -1) and the bottom right is (1, 1).
-fn zaytrace_image_inner(norm_x: f32, flipped_norm_y: f32) -> Rgbf32 {
-    // Flip y to make y up
-    let norm_y = flipped_norm_y * -1;
-
-    // **Perspective Projection**
-    let FOV_HORIZONTAL_RAD: f32 = degToRad(35);
-
-    // Given a projection plane 1 unit ahead of the camera,
-    // how far away from the center of the plane are the
-    // left/right (x_outer_bound) and top/bottom (y_outer_bound) edges?
-    let x_outer_bound = f32::tan(FOV_HORIZONTAL_RAD);
-    let y_outer_bound = x_outer_bound * ((main.WINDOW_HEIGHT as f32) / main.WINDOW_WIDTH);
-
-    let x_dir_unnormalized = norm_x * x_outer_bound;
-    let y_dir_unnormalized = norm_y * y_outer_bound;
-
-    let ray_pos = Vec3::from_xyz(0, 0, -2);
-    let ray_dir = Vec3::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1).normalize();
-
-    return zaytrace_ray(null, ray_pos, ray_dir, 0);
-}
-
-// **Inner raytracing loop** :D
-const MAX_BOUNCES: usize = 16;
-fn zaytrace_ray(origin_geo: &Geo, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Rgbf32 {
-    if (bounces > MAX_BOUNCES) { return Rgbf32.from_rgb_f32(0, 0, 0); }
-
-    let closest_inter_t: f32 = 1000.0;
-    let maybe_closest_inter: Option<Intersection> = None;
-    let maybe_closest_inter_geo: Option<&Geo> = None;
-
-    for geo in geo.items {
-        if (geo == origin_geo) { continue };
-
-        match (geo) {
-            Geo::Tri(tri) => {
-                if let Some(inter) = tri.intersect(ray_pos, ray_dir) {
-                    if (inter.t < closest_inter_t) {
-                        // TODO: alpha only applies to direct rays so far. add separate indirect/direct bounce settings
-                        if (bounces == 0) {
-                            match (tri.shader) {
-                                PerVertex(perVertex) => {
-                                    let w = inter.geo.tri.w;
-                                    let v = inter.geo.tri.v;
-                                    let u = inter.geo.tri.u;
-
-                                    let colors = perVertex.colors;
-                                    let a = w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
-
-                                    if (a > random_alpha()) {
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-
-                        closest_inter_t = inter.t;
-                        maybe_closest_inter = inter;
-                        maybe_closest_inter_geo = geo;
-                    }
-                }
-            },
-            _ => unimplemented!()
-        }
-    }
-
-    if let Some(closest_inter) = maybe_closest_inter {
-        let tri_inter = closest_inter.geo.tri;
-        if let Some(geo) = maybe_closest_inter_geo {
+        for geoId in self.resolve_handle(handle) {
+            let geo = self.geos[*geoId];
             match geo {
-                Tri(tri) => {
-                    match tri.shader {
-                        PerVertex(perVertex) => {
-                            // currently this is emissive
-                            let w = tri_inter.w;
-                            let v = tri_inter.v;
-                            let u = tri_inter.u;
-
-                            let colors = perVertex.colors;
-                            let r = w * colors[0][0] + v * colors[1][0] + u * colors[2][0];
-                            let g = w * colors[0][1] + v * colors[1][1] + u * colors[2][1];
-                            let b = w * colors[0][2] + v * colors[1][2] + u * colors[2][2];
-
-                            // make it much brighter if it's indirect bounce
-                            if (bounces > 0) {
-                                return Rgbf32.from_rgb_f32(r, g, b).mul_scalar(10);
-                            } else {
-                                return Rgbf32.from_rgb_f32(r, g, b);
-                            }
-                        },
-                        Material(material) => {
-                            if (material.emission >= 1) {
-                                // Do not bounce if fully emissive
-                                if (bounces > 0) {
-                                    return material.color.mul_scalar(material.emission);
-                                } else {
-                                    // To avoid color clipping, don't multiply direct rays by more than 1
-                                    return material.color;
-                                }
-                            } else {
-                                let n = closest_inter.n;
-                                if (n.dot(ray_dir) > 0) {
-                                    // If normal is facing the wrong direction, flip it
-                                    n = n.mul_scalar(-1);
-                                }
-
-                                // **Find orthonormal basis**
-                                // Building an Orthonormal Basis, Revisited - Pixar
-                                // https://jcgt.org/published/0006/01/01/
-                                // const x = n.val[0];
-                                // const y = n.val[1];
-                                // const z = n.val[2];
-                                // const sign = std.math.copysign(@as(f32, 1), z); // std.math.copysign is not the same as std.math.sign
-                                // const a = -1.0 / (sign + z);
-                                // const b = x * y * a;
-                                // const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };
-                                // const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
-                                // now <n, b1, b2> is an orthonormal basis
-
-                                // get a random 2D vector within the hemisphere that will bounce away from the surface
-                                let bounce_dir = random_unit_vector();
-                                if (n.dot(bounce_dir) < 0) {
-                                    bounce_dir = bounce_dir.mul_scalar(-1);
-                                }
-
-                                // cos(θ) = a ⋅ b / |a||b|, but since bounce_dir and n are unit vectors, no need to divide by |a||b|
-                                // const lambertian_scalar = n.dot(bounce_dir);
-
-                                // assert(bounce_dir.dot(n) > 0);
-                                return material.color
-                                    .mul_elementwise(zaytrace_ray(geo, closest_inter.p, bounce_dir, bounces + 1));
-                                    // .mul_scalar(lambertian_scalar);
-                            }
-                        },
+                Geo::Tri(tri) => {
+                    for v in &tri.v {
+                        *v = rot.mul_vec(*v);
                     }
                 },
+                _ => unimplemented!(),
             }
         }
+
+        return self;
     }
 
-    return Rgbf32.from_rgb_f32(0, 0, 0);
+    fn translate(&mut self, handle: &GeosHandle, x: f32, y: f32, z: f32) -> GeosHandle {
+        for geoId in self.resolve_handle(handle) {
+            let geo = self.geos[*geoId];
+            match geo {
+                Geo::Tri(tri) => {
+                    for v in &tri.v {
+                        *v = (*v).add(Vec3::from_xyz(x, y, z));
+                    }
+                },
+                _ => unimplemented!(),
+            }
+        }
+
+        return self;
+    }
 }
+
+pub fn rainbow(buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
+    for (row, row_pixels) in buf.iter_mut().enumerate() {
+        // map row to normalized y coordinates
+        //     (Vulkan style, [-1, -1] xy is the top left corner of the screen)
+        let y = map_range((row as f32), 0., WINDOW_HEIGHT as f32, -1.0, 1.0);
+        for (col, px) in row_pixels.iter_mut().enumerate() {
+            let x = map_range((col as f32), 0., WINDOW_WIDTH as f32, -1.0, 1.0);
+            _ = x;
+
+            let hue_deg = map_range(y, -1., 1., 0., 360.);
+            *px = hsv_to_rgb(hue_deg, 1., 1.).to_argb8888(1.0);
+        }
+    }
+}
+
+const MAX_ACCUMULATE_STEPS: u32 = 1024;
+const DITHER_DIVISOR: usize = 256;
+
+const fn deg_to_rad(deg: f32) -> f32 {
+    return deg * PI / 180.;
+}
+

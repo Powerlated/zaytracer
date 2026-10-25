@@ -12,6 +12,10 @@ impl Vec3 {
         return Vec3 { val: [x, y, z] };
     }
 
+    pub fn from_rgb_f32(r: f32, g: f32, b: f32) -> Vec3 {
+        return Self::from_xyz(r, g, b);
+    }
+
     pub fn add(self: Vec3, b: Vec3) -> Vec3 {
         return Vec3 { val: [
             self.val[0] + b.val[0],
@@ -81,12 +85,14 @@ impl Vec3 {
         return u.mul_scalar(v.dot(u) / u.dot(u));
     }
 
-    pub fn normalize(self: Vec3) -> Vec3 {
-        let magn = f32::sqrt(self.val[0] * self.val[0] +
-            self.val[1] * self.val[1] +
-            self.val[2] * self.val[2]);
+    pub fn magn(self: Vec3) -> f32 {
+        return f32::sqrt(self.val[0] * self.val[0] +
+                         self.val[1] * self.val[1] +
+                         self.val[2] * self.val[2]);
+    }
 
-        return self.div(magn);
+    pub fn normalize(self: Vec3) -> Vec3 {
+        return self.div(self.magn());
     }
 
     pub fn color_f32_to_255(color_f32: f32) -> u32 {

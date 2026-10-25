@@ -24,8 +24,8 @@ struct WgpuState {
     render_pipeline: wgpu::RenderPipeline
 }
 
-const WINDOW_WIDTH: u32 = 640;
-const WINDOW_HEIGHT: u32 = 480;
+pub const WINDOW_WIDTH: usize = 640;
+pub const WINDOW_HEIGHT: usize = 480;
 
 impl WgpuState {
     async fn init_wgpu(display: OwnedDisplayHandle, arc_window: Arc<Window>) -> WgpuState {
@@ -92,8 +92,8 @@ impl WgpuState {
             // Request compatibility with the sRGB-format texture that will be created later
             view_formats: vec![surface_format.add_srgb_suffix()],
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            width: WINDOW_WIDTH,
-            height: WINDOW_HEIGHT,
+            width: WINDOW_WIDTH as u32,
+            height: WINDOW_HEIGHT as u32,
             desired_maximum_frame_latency: 2,
             present_mode: wgpu::PresentMode::AutoVsync,
         });
@@ -170,7 +170,7 @@ impl ApplicationHandler for App {
 
         arc_window.set_resizable(false);
         arc_window.set_enabled_buttons(arc_window.enabled_buttons().difference(WindowButtons::MAXIMIZE));
-        let l_size = LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT);
+        let l_size = LogicalSize::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32);
         arc_window.set_max_inner_size(Some(l_size));
         arc_window.set_min_inner_size(Some(l_size));
         let _ = arc_window.request_inner_size(l_size);
