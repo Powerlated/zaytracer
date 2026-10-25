@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use std::borrow::Cow;
+use wgpu::TextureFormat::Rgba8Uint;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -20,7 +21,9 @@ struct WgpuState {
     size: winit::dpi::PhysicalSize<u32>,
     surface: wgpu::Surface<'static>,
     surface_format: wgpu::TextureFormat,
-    render_pipeline: wgpu::RenderPipeline
+    render_pipeline: wgpu::RenderPipeline,
+
+    // texture_bind_group: wgpu::BindGroup,
 }
 
 pub const WINDOW_WIDTH: usize = 640;
@@ -46,46 +49,19 @@ impl WgpuState {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("triangle.wgsl"))),
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[],
-            immediate_size: 0
-        });
-
         let surface = instance.create_surface(arc_window.clone()).unwrap();
 
         let swapchain_capabilities = surface.get_capabilities(&adapter);
         let swapchain_format = swapchain_capabilities.formats[0];
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(swapchain_format.into())]
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
         let cap = surface.get_capabilities(&adapter);
         let size = arc_window.inner_size();
         let surface_format = cap.formats[0];
 
-        // Configure surface for the first time
+        // Configure surface for the first time. WebGPU always draws to a texture,
+        // just a special one for the main screen
         surface.configure(&device, &wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
             format: surface_format,
             color_space: wgpu::SurfaceColorSpace::Auto,
             // Request compatibility with the sRGB-format texture that will be created later
@@ -97,6 +73,108 @@ impl WgpuState {
             present_mode: wgpu::PresentMode::AutoVsync,
         });
 
+        /*
+        // *Texture setup for drawing raytraced image to screen*
+        let texture = device.create_texture(&wgpu::wgt::TextureDescriptor { 
+            label: None, 
+            size: wgpu::Extent3d {
+                width: WINDOW_WIDTH as u32,
+                height: WINDOW_HEIGHT as u32,
+                depth_or_array_layers: 1
+            }, 
+            mip_level_count: 1,
+            sample_count: 1, 
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            // Specifies what texture formats can be used to create TextureViews for this texture,
+            view_formats: &[]
+        });
+
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        // This should match the filterable field of the
+                        // corresponding Texture entry above.
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: None,
+            });
+
+        let texture_bind_group = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                layout: &texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    }
+                ],
+                label: None,
+            }
+        );
+
+        */
+        // Must add bind group layouts to pipeline layout
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[], //Some(&texture_bind_group_layout)
+            immediate_size: 0
+        });
+
+        // And then pipeline layout is used to create the render pipeline
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(swapchain_format.into())]
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         WgpuState {
             instance,
             arc_window,
@@ -105,7 +183,8 @@ impl WgpuState {
             size,
             surface,
             surface_format,
-            render_pipeline
+            render_pipeline,
+            // texture_bind_group
         }
     }
 
@@ -144,7 +223,8 @@ impl WgpuState {
             multiview_mask: None,
         });
         render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.draw(0..3, 0..1);
+        // render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
+        render_pass.draw(0..6, 0..1);
 
         // Call draw commands here
 
