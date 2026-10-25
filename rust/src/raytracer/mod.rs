@@ -457,7 +457,7 @@ pub struct Raytracer {
     main_prng: rand::rngs::Xoshiro128PlusPlus,
     dither_prng: rand::rngs::Xoshiro128PlusPlus,
     geos: Vec<Geo>,
-    handleToGeoIdsArrayList: Vec<Vec<GeoId>>,
+    handle_to_geo_ids: Vec<Vec<GeoId>>,
     accumulator_buf: Box<[Rgbf32]>,
     accumulate_steps: u32,
 }
@@ -469,7 +469,7 @@ impl Raytracer {
             main_prng: rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0),
             dither_prng: rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0),
             geos: Vec::new(),
-            handleToGeoIdsArrayList: Vec::new(),
+            handle_to_geo_ids: Vec::new(),
             accumulator_buf: vec![Rgbf32::zero(); WINDOW_HEIGHT * WINDOW_WIDTH as usize].into_boxed_slice(),
             accumulate_steps: 0,
         };
@@ -519,8 +519,8 @@ impl Raytracer {
             self.geos.push((*geo_to_add).clone());
         }
 
-        let handle_to_return = self.handleToGeoIdsArrayList.len();
-        self.handleToGeoIdsArrayList.push(geo_indices);
+        let handle_to_return = self.handle_to_geo_ids.len();
+        self.handle_to_geo_ids.push(geo_indices);
 
         return GeosHandle { val: handle_to_return };
     }
@@ -709,18 +709,16 @@ impl Raytracer {
                                 // const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
                                 // now <n, b1, b2> is an orthonormal basis
 
-                                // get a random 2D vector within the hemisphere that will bounce away from the surface
-                                let mut bounce_dir = random_unit_vector(&mut self.main_prng);
-                                if n.dot(bounce_dir) < 0.  {
-                                    bounce_dir = bounce_dir.mul_scalar(-1.);
-                                }
-
-                                // cos(θ) = a ⋅ b / |a||b|, but since bounce_dir and n are unit vectors, no need to divide by |a||b|
-                                // const lambertian_scalar = n.dot(bounce_dir);
+                                // **Lambertian diffuse bounce**
+                                // get a random point on the unit sphere around the hit location
+                                let point_on_sphere = closest_inter.p.add(random_unit_vector(&mut self.main_prng));
+                                // shift that point 1 unit away from the hit point along the normal vector
+                                let point_on_sphere_shifted = point_on_sphere.add(n);
+                                let lambertian_ray_dir = point_on_sphere_shifted.sub(closest_inter.p).normalize();
 
                                 // assert(bounce_dir.dot(n) > 0);
                                 return material.color
-                                    .mul_elementwise(self.zaytrace_ray(maybe_closest_inter_geo_id, closest_inter.p, bounce_dir, bounces + 1));
+                                    .mul_elementwise(self.zaytrace_ray(maybe_closest_inter_geo_id, closest_inter.p, lambertian_ray_dir, bounces + 1));
                                     // .mul_scalar(lambertian_scalar);
                             }
                         },
@@ -745,13 +743,13 @@ impl Raytracer {
             }
         }
 
-        self.handleToGeoIdsArrayList.push(consolidated_ids);
+        self.handle_to_geo_ids.push(consolidated_ids);
 
-        return GeosHandle { val: self.handleToGeoIdsArrayList.len() - 1 };
+        return GeosHandle { val: self.handle_to_geo_ids.len() - 1 };
     }    
 
     fn resolve_handle(&mut self, handle: &GeosHandle) -> &Vec<GeoId> {
-        return &self.handleToGeoIdsArrayList[handle.val];
+        return &self.handle_to_geo_ids[handle.val];
     }
 }
 

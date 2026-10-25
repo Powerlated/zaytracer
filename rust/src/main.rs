@@ -81,7 +81,7 @@ impl WgpuState {
             width: WINDOW_WIDTH as u32,
             height: WINDOW_HEIGHT as u32,
             desired_maximum_frame_latency: 2,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: wgpu::PresentMode::AutoNoVsync,
         });
 
         /*
@@ -209,6 +209,7 @@ impl WgpuState {
             _ => { panic!(); }
         };
 
+        /*
         let texture_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor {
@@ -218,7 +219,6 @@ impl WgpuState {
                 ..Default::default()
             });
 
-        /*
         // Render a solid green screen
         let mut encoder = self.device.create_command_encoder(&Default::default());
         // Create the render pass object that will clear the screen.
