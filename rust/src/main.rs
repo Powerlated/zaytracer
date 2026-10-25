@@ -1,52 +1,152 @@
+use std::sync::Arc;
+
+use wgpu::wgc::command::EncodingApi::Wgpu;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
+
+// examples this is based off
+// https://github.com/gfx-rs/wgpu/blob/trunk/examples/standalone/02_hello_window/src/main.rs#L3
+struct WgpuState {
+    instance: wgpu::Instance,
+    arc_window: Arc<winit::window::Window>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    size: winit::dpi::PhysicalSize<u32>,
+    surface: wgpu::Surface<'static>,
+    surface_format: wgpu::TextureFormat,
+}
+
+const WINDOW_WIDTH: u32 = 640;
+const WINDOW_HEIGHT: u32 = 480;
+
+impl WgpuState {
+    async fn init_wgpu(display: OwnedDisplayHandle, arc_window: Arc<Window>) -> WgpuState {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
+            Box::new(display)
+        ));
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .unwrap();
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await
+            .unwrap();
+
+        let size = arc_window.inner_size();
+
+        let surface = instance.create_surface(arc_window.clone()).unwrap();
+        let cap = surface.get_capabilities(&adapter);
+        let surface_format = cap.formats[0];
+
+        // Configure surface for the first time
+        surface.configure(&device, &wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            // Request compatibility with the sRGB-format texture that will be created later
+            view_formats: vec![surface_format.add_srgb_suffix()],
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            width: WINDOW_WIDTH,
+            height: WINDOW_HEIGHT,
+            desired_maximum_frame_latency: 2,
+            present_mode: wgpu::PresentMode::AutoVsync,
+        });
+
+        WgpuState {
+            instance,
+            arc_window,
+            device,
+            queue,
+            size,
+            surface,
+            surface_format
+        }
+    }
+
+    fn render(&mut self) {
+        let surface_texture = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) => texture,
+            _ => { panic!(); }
+        };
+
+        let texture_view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                // Without add_srgb_suffix() the image we will be working with
+                // might not be "gamma correct".
+                format: Some(self.surface_format.add_srgb_suffix()),
+                ..Default::default()
+            });
+
+        // Render a solid green screen
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        // Create the render pass object that will clear the screen.
+        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &texture_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
+                    store: wgpu::StoreOp::Store,
+                }
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+
+        // Call draw commands here
+
+        // End the render pass.
+        drop(render_pass);
+
+        // End the render pass
+        self.queue.submit([encoder.finish()]);
+        self.arc_window.pre_present_notify();
+        self.queue.present(surface_texture);
+    }
+}
 
 #[derive(Default)]
 struct App {
-    window: Option<Window>,
+    wgpu_state: Option<WgpuState>,
 }
-
-const WINDOW_WIDTH: u16 = 640;
-const WINDOW_HEIGHT: u16 = 480;
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = event_loop.create_window(Window::default_attributes()).unwrap();
+        let arc_window = Arc::new(event_loop.create_window(Window::default_attributes()).unwrap());
 
-        window.set_resizable(false);
-        window.set_enabled_buttons(window.enabled_buttons().difference(WindowButtons::MAXIMIZE));
+        arc_window.set_resizable(false);
+        arc_window.set_enabled_buttons(arc_window.enabled_buttons().difference(WindowButtons::MAXIMIZE));
         let l_size = LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT);
-        window.set_max_inner_size(Some(l_size));
-        window.set_min_inner_size(Some(l_size));
-        let _ = window.request_inner_size(l_size);
+        arc_window.set_max_inner_size(Some(l_size));
+        arc_window.set_min_inner_size(Some(l_size));
+        let _ = arc_window.request_inner_size(l_size);
 
-        self.window = Some(window);
+        self.wgpu_state = Some(pollster::block_on(WgpuState::init_wgpu(
+            event_loop.owned_display_handle(), 
+            arc_window
+        )));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let state = self.wgpu_state.as_mut().unwrap();
         match event {
             WindowEvent::CloseRequested => {
                 println!("The close button was pressed; stopping");
                 event_loop.exit();
             },
             WindowEvent::RedrawRequested => {
-                // Redraw the application.
-                //
-                // It's preferable for applications that do not render continuously to render in
-                // this event rather than in AboutToWait, since rendering in here allows
-                // the program to gracefully handle redraws requested by the OS.
-
-                // Draw.
-
-                // Queue a RedrawRequested event.
-                //
-                // You only need to call this if you've determined that you need to redraw in
-                // applications which do not always need to. Applications that redraw continuously
-                // can render here instead.
-                self.window.as_ref().unwrap().request_redraw();
+                state.render();
+                // Emits a new redraw requested event.
+                state.arc_window.request_redraw();
             }
             _ => (),
         }
