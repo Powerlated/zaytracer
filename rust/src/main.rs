@@ -1,16 +1,29 @@
 use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowButtons, WindowId};
 
 #[derive(Default)]
 struct App {
     window: Option<Window>,
 }
 
+const WINDOW_WIDTH: u16 = 640;
+const WINDOW_HEIGHT: u16 = 480;
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.window = Some(event_loop.create_window(Window::default_attributes()).unwrap());
+        let window = event_loop.create_window(Window::default_attributes()).unwrap();
+
+        window.set_resizable(false);
+        window.set_enabled_buttons(window.enabled_buttons().difference(WindowButtons::MAXIMIZE));
+        let l_size = LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT);
+        window.set_max_inner_size(Some(l_size));
+        window.set_min_inner_size(Some(l_size));
+        let _ = window.request_inner_size(l_size);
+
+        self.window = Some(window);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
