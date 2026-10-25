@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use std::borrow::Cow;
 use wgpu::wgc::command::EncodingApi::Wgpu;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -7,8 +8,9 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
-// examples this is based off
+// **examples this is based off**
 // https://github.com/gfx-rs/wgpu/blob/trunk/examples/standalone/02_hello_window/src/main.rs#L3
+// https://github.com/gfx-rs/wgpu/blob/trunk/examples/features/src/hello_triangle/mod.rs
 struct WgpuState {
     instance: wgpu::Instance,
     arc_window: Arc<winit::window::Window>,
@@ -17,6 +19,7 @@ struct WgpuState {
     size: winit::dpi::PhysicalSize<u32>,
     surface: wgpu::Surface<'static>,
     surface_format: wgpu::TextureFormat,
+    render_pipeline: wgpu::RenderPipeline
 }
 
 const WINDOW_WIDTH: u32 = 640;
@@ -36,10 +39,47 @@ impl WgpuState {
             .await
             .unwrap();
 
-        let size = arc_window.inner_size();
+        // **Load shaders from disk**
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("triangle.wgsl"))),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[],
+            immediate_size: 0
+        });
 
         let surface = instance.create_surface(arc_window.clone()).unwrap();
+
+        let swapchain_capabilities = surface.get_capabilities(&adapter);
+        let swapchain_format = swapchain_capabilities.formats[0];
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(swapchain_format.into())]
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let cap = surface.get_capabilities(&adapter);
+        let size = arc_window.inner_size();
         let surface_format = cap.formats[0];
 
         // Configure surface for the first time
@@ -63,7 +103,8 @@ impl WgpuState {
             queue,
             size,
             surface,
-            surface_format
+            surface_format,
+            render_pipeline
         }
     }
 
@@ -85,7 +126,7 @@ impl WgpuState {
         // Render a solid green screen
         let mut encoder = self.device.create_command_encoder(&Default::default());
         // Create the render pass object that will clear the screen.
-        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &texture_view,
@@ -101,10 +142,12 @@ impl WgpuState {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.draw(0..3, 0..1);
 
         // Call draw commands here
 
-        // End the render pass.
+        // End the render pass. 
         drop(render_pass);
 
         // End the render pass
