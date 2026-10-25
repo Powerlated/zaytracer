@@ -1,6 +1,6 @@
 #[derive(Clone, Copy)]
-struct Vec3 {
-    val: [f32; 3]
+pub struct Vec3 {
+    pub val: [f32; 3]
 }
 
 impl Vec3 {
@@ -12,7 +12,7 @@ impl Vec3 {
         return Vec3 { val: [x, y, z] };
     }
 
-    pub fn add(self: &Vec3, b: &Vec3) -> Vec3 {
+    pub fn add(self: Vec3, b: Vec3) -> Vec3 {
         return Vec3 { val: [
             self.val[0] + b.val[0],
             self.val[1] + b.val[1],
@@ -20,7 +20,7 @@ impl Vec3 {
         ]};
     }
 
-    pub fn sub(self: &Vec3, b: &Vec3) -> Vec3 {
+    pub fn sub(self: Vec3, b: Vec3) -> Vec3 {
         return Vec3 { val: [
             self.val[0] - b.val[0],
             self.val[1] - b.val[1],
@@ -28,7 +28,7 @@ impl Vec3 {
         ]};
     }
 
-    pub fn mul_scalar(self: &Vec3, b: f32) -> Vec3 {
+    pub fn mul_scalar(self: Vec3, b: f32) -> Vec3 {
         return Vec3 { val: [
             self.val[0] * b,
             self.val[1] * b,
@@ -36,7 +36,7 @@ impl Vec3 {
         ]};
     }
 
-    pub fn mul_elementwise(self: &Vec3, b: &Vec3) -> Vec3 {
+    pub fn mul_elementwise(self: Vec3, b: Vec3) -> Vec3 {
         return Vec3 { val: [
             self.val[0] * b.val[0],
             self.val[1] * b.val[1],
@@ -44,7 +44,15 @@ impl Vec3 {
         ]};
     }
 
-    pub fn div(self: &Vec3, b: f32) -> Vec3 {
+    pub fn div(self: Vec3, b: f32) -> Vec3 {
+        return Vec3 { val: [
+            self.val[0] / b,
+            self.val[1] / b,
+            self.val[2] / b,
+        ]};
+    }
+    
+    pub fn div_scalar(self: Vec3, b: f32) -> Vec3 {
         return Vec3 { val: [
             self.val[0] / b,
             self.val[1] / b,
@@ -52,14 +60,14 @@ impl Vec3 {
         ]};
     }
 
-    pub fn dot(self: &Vec3, b: &Vec3) -> f32 {
+    pub fn dot(self: Vec3, b: Vec3) -> f32 {
         return 
             self.val[0] * b.val[0] +
             self.val[1] * b.val[1] +
             self.val[2] * b.val[2];
     }
 
-    pub fn cross(self: &Vec3, b_vec3: &Vec3) -> Vec3 {
+    pub fn cross(self: Vec3, b_vec3: Vec3) -> Vec3 {
         let a = self.val;
         let b = b_vec3.val;
         let x = 0;
@@ -68,12 +76,12 @@ impl Vec3 {
         return Vec3 { val: [a[y] * b[z] - a[z] * b[y], a[z] * b[x] - a[x] * b[z], a[x] * b[y] - a[y] * b[x]] };
     }
 
-    pub fn proj(self: &Vec3, v: &Vec3) -> Vec3 {
+    pub fn proj(self: Vec3, v: Vec3) -> Vec3 {
         let u = self;
         return u.mul_scalar(v.dot(u) / u.dot(u));
     }
 
-    pub fn normalize(self: &Vec3) -> Vec3 {
+    pub fn normalize(self: Vec3) -> Vec3 {
         let magn = f32::sqrt(self.val[0] * self.val[0] +
             self.val[1] * self.val[1] +
             self.val[2] * self.val[2]);
@@ -94,8 +102,8 @@ impl Vec3 {
 }
 
 #[derive(Clone, Copy)]
-struct Mat33 {
-    val: [f32; 9]
+pub struct Mat33 {
+    pub val: [f32; 9]
 }
 
 impl Mat33 {
@@ -116,19 +124,19 @@ impl Mat33 {
 
     // Calculates determinant of `self`, with column at column index (0-indexed)
     // `col_i` replaced with `col`.
-    pub fn det_with_col_replaced<const col_i: usize>(self: &Mat33, col: &Vec3) -> f32 {
+    pub fn det_with_col_replaced<const COL_I: usize>(self: &Mat33, col: Vec3) -> f32 {
         let mut replaced: Mat33 = self.clone();
 
-        const { assert!(col_i >= 0 && col_i <= 2, "col_i must be between 0 and 2 for this 3x3 matrix") };
+        const { assert!(COL_I <= 2, "col_i must be between 0 and 2 for this 3x3 matrix") };
 
-        replaced.val[0 + col_i] = col.val[0];
-        replaced.val[3 + col_i] = col.val[1];
-        replaced.val[6 + col_i] = col.val[2];
+        replaced.val[0 + COL_I] = col.val[0];
+        replaced.val[3 + COL_I] = col.val[1];
+        replaced.val[6 + COL_I] = col.val[2];
 
         return replaced.det();
     }
 
-    pub fn from_col_vecs(v0: &Vec3, v1: &Vec3, v2: &Vec3) -> Mat33 {
+    pub fn from_col_vecs(v0: Vec3, v1: Vec3, v2: Vec3) -> Mat33 {
         return Mat33 { val: [
             v0.val[0], v1.val[0], v2.val[0],
             v0.val[1], v1.val[1], v2.val[1],
@@ -161,7 +169,7 @@ impl Mat33 {
         return Mat33 { val: mat_val };
     }
 
-    pub fn mul_vec(self: &Mat33, b_vec: &Vec3) -> Vec3 {
+    pub fn mul_vec(self: &Mat33, b_vec: Vec3) -> Vec3 {
         let a = self.val;
         let b = b_vec.val;
 
