@@ -1,6 +1,5 @@
 use std::f32::consts::PI;
 use std::ops::Div;
-use std::sync::Arc;
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -104,7 +103,7 @@ impl Tri {
     // `O`: Origin point
     // `D`: Direction vector
     #[allow(non_snake_case)]
-    fn intersect(self: &Tri, O: Vec3, D: Vec3) -> Option<(Intersection, TriIntersection)> {
+    fn intersect(self: &Tri, O: Vec3, D: Vec3) -> Option<(Intersection<'_>, TriIntersection<'_>)> {
         let v1 = self.v[0];
         let v2 = self.v[1];
         let v3 = self.v[2];
@@ -302,15 +301,15 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgbf32 {
     // r', g', b'
     let p: Vec3;
 
-    if (h < 60.) {
+    if h < 60.  {
         p = Vec3::from_xyz(c, x, 0.);
-    } else if (h < 120.) {
+    } else if h < 120.  {
         p = Vec3::from_xyz(x, c, 0.);
-    } else if (h < 180.) {
+    } else if h < 180.  {
         p = Vec3::from_xyz(0., c, x);
-    } else if (h < 240.) {
+    } else if h < 240.  {
         p = Vec3::from_xyz(0., x, c);
-    } else if (h < 300.) {
+    } else if h < 300.  {
         p = Vec3::from_xyz(x, 0., c);
     } else {
         p = Vec3::from_xyz(c, 0., x);
@@ -437,7 +436,7 @@ fn random_unit_vector(prng: &mut StdRng) -> Vec3 {
 
         let xyz_magn = xyz_float.magn();
         
-        if (xyz_magn <= 1.0 && xyz_magn > 0.01) {
+        if xyz_magn <= 1.0 && xyz_magn > 0.01  {
             return xyz_float.normalize();
         }
     }
@@ -541,7 +540,7 @@ impl Raytracer {
                 let uniform_rect_dist =
                     (int as f32) / (0xFFFFFFFFu32 as f32) - 0.5 * (1. / DITHER_DIVISOR as f32);
 
-                let mut dithered = self.accumulator_buf[row][col].add(Rgbf32 {val: [
+                let dithered = self.accumulator_buf[row][col].add(Rgbf32 {val: [
                     uniform_rect_dist,
                     uniform_rect_dist,
                     uniform_rect_dist,
@@ -553,7 +552,7 @@ impl Raytracer {
     }
 
     pub fn zaytrace_image(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) -> u32 {
-        if (self.accumulate_steps < MAX_ACCUMULATE_STEPS) {
+        if self.accumulate_steps < MAX_ACCUMULATE_STEPS  {
             // **First, trace one ray per pixel, and then update the accumulator
             // buffer with the cumulative average.**
             for (row, row_pixels) in buf.iter_mut().enumerate() {
@@ -615,7 +614,7 @@ impl Raytracer {
     // **Inner raytracing loop** :D
     const MAX_BOUNCES: u8 = 16;
     fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Rgbf32 {
-        if (bounces > Self::MAX_BOUNCES) { return Rgbf32::from_rgb_f32(0., 0., 0.); }
+        if bounces > Self::MAX_BOUNCES  { return Rgbf32::from_rgb_f32(0., 0., 0.); }
 
         let mut closest_inter_t: f32 = 1000.0;
         let mut maybe_closest_inter: Option<Intersection> = None;
@@ -624,12 +623,12 @@ impl Raytracer {
         for (geo_id, geo) in self.geos.iter().enumerate() {
             if let Some(origin_geo_id) = maybe_origin_geo_id && origin_geo_id == geo_id { continue };
 
-            match (geo) {
+            match geo  {
                 Geo::Tri(tri) => {
                     if let Some((inter, tri_inter)) = tri.intersect(ray_pos, ray_dir) {
-                        if (inter.t < closest_inter_t) {
+                        if inter.t < closest_inter_t  {
                             // TODO: alpha only applies to direct rays so far. add separate indirect/direct bounce settings
-                            if (bounces == 0) {
+                            if bounces == 0  {
                                 let shader = tri.shader.as_ref().unwrap();
                                 match shader {
                                     PerVertex(per_vertex) => {
@@ -640,7 +639,7 @@ impl Raytracer {
                                         let colors = per_vertex.colors;
                                         let a = w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
 
-                                        if (a > random_alpha(&mut self.main_prng)) {
+                                        if a > random_alpha(&mut self.main_prng)  {
                                             continue;
                                         }
                                     },
@@ -677,16 +676,16 @@ impl Raytracer {
                             let b = w * colors[0][2] + v * colors[1][2] + u * colors[2][2];
 
                             // make it much brighter if it's indirect bounce
-                            if (bounces > 0) {
+                            if bounces > 0  {
                                 return Rgbf32::from_rgb_f32(r, g, b).mul_scalar(10.);
                             } else {
                                 return Rgbf32::from_rgb_f32(r, g, b);
                             }
                         },
                         Material(material) => {
-                            if (material.emission >= 1.) {
+                            if material.emission >= 1.  {
                                 // Do not bounce if fully emissive
-                                if (bounces > 0) {
+                                if bounces > 0  {
                                     return material.color.mul_scalar(material.emission);
                                 } else {
                                     // To avoid color clipping, don't multiply direct rays by more than 1
@@ -694,7 +693,7 @@ impl Raytracer {
                                 }
                             } else {
                                 let mut n = closest_inter.n;
-                                if (n.dot(ray_dir) > 0.) {
+                                if n.dot(ray_dir) > 0.  {
                                     // If normal is facing the wrong direction, flip it
                                     n = n.mul_scalar(-1.);
                                 }
@@ -714,7 +713,7 @@ impl Raytracer {
 
                                 // get a random 2D vector within the hemisphere that will bounce away from the surface
                                 let mut bounce_dir = random_unit_vector(&mut self.main_prng);
-                                if (n.dot(bounce_dir) < 0.) {
+                                if n.dot(bounce_dir) < 0.  {
                                     bounce_dir = bounce_dir.mul_scalar(-1.);
                                 }
 
@@ -762,9 +761,9 @@ pub fn rainbow(buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
     for (row, row_pixels) in buf.iter_mut().enumerate() {
         // map row to normalized y coordinates
         //     (Vulkan style, [-1, -1] xy is the top left corner of the screen)
-        let y = map_range((row as f32), 0., WINDOW_HEIGHT as f32, -1.0, 1.0);
+        let y = map_range(row as f32 , 0., WINDOW_HEIGHT as f32, -1.0, 1.0);
         for (col, px) in row_pixels.iter_mut().enumerate() {
-            let x = map_range((col as f32), 0., WINDOW_WIDTH as f32, -1.0, 1.0);
+            let x = map_range(col as f32 , 0., WINDOW_WIDTH as f32, -1.0, 1.0);
             _ = x;
 
             let hue_deg = map_range(y, -1., 1., 0., 360.);

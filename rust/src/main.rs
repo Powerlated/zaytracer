@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use std::borrow::Cow;
-use wgpu::wgc::command::EncodingApi::Wgpu;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -181,7 +180,7 @@ impl ApplicationHandler for App {
         )));
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let state = self.wgpu_state.as_mut().unwrap();
         match event {
             WindowEvent::CloseRequested => {
