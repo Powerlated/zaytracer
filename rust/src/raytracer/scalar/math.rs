@@ -164,15 +164,15 @@ impl Bgra {
         ]};
     }
 
-    pub fn color_f32_to_255(color_f32: f32) -> u32 {
-        return (f32::clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5) as u32;
+    pub fn color_f32_to_255(color_f32: f32) -> u8 {
+        return (f32::clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5) as u8;
     }
 
-    pub fn to_argb8888(self: &Bgra) -> u32 {
-        return (Self::color_f32_to_255(self.val[3]) << 24) |
-            (Self::color_f32_to_255(self.val[2]) << 16) |
-            (Self::color_f32_to_255(self.val[1]) << 8) |
-            (Self::color_f32_to_255(self.val[0]));
+    pub fn to_argb8888(self: &Bgra) -> [u8; 4] {
+        return [Self::color_f32_to_255(self.val[0]),
+                Self::color_f32_to_255(self.val[1]),
+                Self::color_f32_to_255(self.val[2]),
+                Self::color_f32_to_255(self.val[3])];
     }
 }
 

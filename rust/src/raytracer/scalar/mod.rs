@@ -12,11 +12,11 @@ pub mod shader;
 use rand::rngs::Xoshiro128PlusPlus;
 use rand::{Rng, SeedableRng};
 
+use crate::raytracer::*;
 use crate::raytracer::scalar::geometry::{Geo, Intersection, IntersectionGeo, cube, square, transform_in_place};
 use crate::raytracer::scalar::math::{Mat33, Bgra, Vec3, deg_to_rad, hsv_to_rgb, map_range};
 use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
-use crate::{WINDOW_HEIGHT, WINDOW_WIDTH};
 
 type GeoId = usize;
 
@@ -79,7 +79,7 @@ impl RaytracerScalar {
             // start the PRNGs from 0 seed always
             main_prng: Xoshiro128PlusPlus::seed_from_u64(0),
             geos: Vec::new(),
-            accumulator_buf: vec![Bgra::zero(); WINDOW_HEIGHT * WINDOW_WIDTH as usize].into_boxed_slice(),
+            accumulator_buf: vec![Bgra::zero(); HEIGHT * WIDTH as usize].into_boxed_slice(),
             accumulate_steps: 0,
         };
 
@@ -124,20 +124,22 @@ impl RaytracerScalar {
         }
     }
 
-    fn update_and_dither_output_buffer(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
+    fn update_and_dither_output_buffer(&mut self, buf: &mut RaytracerBuf) {
         let mut dither_prng = rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0);
 
-        for (row, row_pixels) in buf.iter_mut().enumerate() {
-            for (col, px) in row_pixels.iter_mut().enumerate() {
+        for row in 0..HEIGHT {
+            for col in 0..WIDTH {
                 // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
                 let next = dither_prng.next_u64();
 
                 // get bottom half to get a 32-bit var where each bit is I.I.D.
                 let int = next & 0xFFFFFFFF;
-                let uniform_rect_dist =
-                    ((int as f32) / (0xFFFFFFFFu32 as f32) - 0.5) * (1. / (DITHER_DIVISOR as f32));
+                let uniform_rect_dist = ((int as f32) / (0xFFFFFFFFu32 as f32) - 0.5)
+                                        * (1. / (DITHER_DIVISOR as f32));
 
-                let scaled = self.accumulator_buf[row * WINDOW_WIDTH + col].div_scalar(self.accumulate_steps as f32);
+                let scaled = self.accumulator_buf[row * WIDTH + col]
+                            .div_scalar(self.accumulate_steps as f32);
+                        
                 let dithered = scaled.add(Bgra {val: [
                     uniform_rect_dist,
                     uniform_rect_dist,
@@ -145,31 +147,36 @@ impl RaytracerScalar {
                     0.0,
                 ]});
 
+                let buf_offset = row * STRIDE + col * BYTES_PER_PIXEL;
+                let px: &mut [u8; 4] = (&mut buf[buf_offset..buf_offset+BYTES_PER_PIXEL])
+                                        .try_into().unwrap();
+
                 *px = dithered.to_argb8888();
             }
-        }
+        }   
     }
 
-    pub fn raytrace_step(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) -> u32 {
+    pub fn raytrace_step(&mut self, buf: &mut RaytracerBuf) -> u32 {
         if self.accumulate_steps < MAX_ACCUMULATE_STEPS  {
-            // **First, trace one ray per pixel, and then update the accumulator
-            // buffer with the cumulative average.**
-            for (row, row_pixels) in buf.iter_mut().enumerate() {
+            for row in 0..HEIGHT {
                 // map row to normalized y coordinates
                 //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
                 //      and z points into the screen, away from the viewer.)
 
-                for (col, _) in row_pixels.iter_mut().enumerate() {
+                for col in 0..WIDTH {
+                    // **First, trace one ray per pixel, and then update the accumulator
+                    // buffer with the cumulative average.**
+
                     let jitter = random_jitter(&mut self.main_prng);
                     let row_jittered = (row as f32) + jitter.0;
                     let col_jittered = (col as f32) + jitter.1;
 
-                    let norm_y = map_range(row_jittered, 0., WINDOW_HEIGHT as f32, -1., 1.);
-                    let norm_x = map_range(col_jittered, 0., WINDOW_WIDTH as f32, -1., 1.);
+                    let norm_y = map_range(row_jittered, 0., HEIGHT as f32, -1., 1.);
+                    let norm_x = map_range(col_jittered, 0., WIDTH as f32, -1., 1.);
 
                     // perform antialiasing accumulate
                     let new_px = self.zaytrace_image_inner(norm_x, norm_y);
-                    let acc_px = &mut self.accumulator_buf[row * WINDOW_WIDTH + col];
+                    let acc_px = &mut self.accumulator_buf[row * WIDTH + col];
                     *acc_px = (*acc_px).add(new_px);
                 }
             }
@@ -197,7 +204,7 @@ impl RaytracerScalar {
         // how far away from the center of the plane are the
         // left/right (x_outer_bound) and top/bottom (y_outer_bound) edges?
         let x_outer_bound = f32::tan(FOV_HORIZONTAL_RAD);
-        let y_outer_bound = x_outer_bound * ((WINDOW_HEIGHT as f32) / (WINDOW_WIDTH as f32));
+        let y_outer_bound = x_outer_bound * ((HEIGHT as f32) / (WIDTH as f32));
 
         let x_dir_unnormalized = norm_x * x_outer_bound;
         let y_dir_unnormalized = norm_y * y_outer_bound;
@@ -329,20 +336,17 @@ impl RaytracerScalar {
     }
 }
 
-pub fn rainbow(buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
-    for (row, row_pixels) in buf.iter_mut().enumerate() {
-        // map row to normalized y coordinates
-        //     (Vulkan style, [-1, -1] xy is the top left corner of the screen)
-        let y = map_range(row as f32 , 0., WINDOW_HEIGHT as f32, -1.0, 1.0);
-        for (col, px) in row_pixels.iter_mut().enumerate() {
-            let x = map_range(col as f32 , 0., WINDOW_WIDTH as f32, -1.0, 1.0);
-            _ = x;
-
-            let hue_deg = map_range(y, -1., 1., 0., 360.);
-            *px = hsv_to_rgb(hue_deg, 1., 1.).to_argb8888();
-        }
-    }
-}
-
-pub const MAX_ACCUMULATE_STEPS: u32 = 128;
-pub const DITHER_DIVISOR: usize = 256;
+// pub fn rainbow(buf: &RaytracerBuf) {
+//     for (row, row_pixels) in buf.iter_mut().enumerate() {
+//         // map row to normalized y coordinates
+//         //     (Vulkan style, [-1, -1] xy is the top left corner of the screen)
+//         let y = map_range(row as f32 , 0., HEIGHT as f32, -1.0, 1.0);
+//         for (col, px) in row_pixels.iter_mut().enumerate() {
+//             let x = map_range(col as f32 , 0., WIDTH as f32, -1.0, 1.0);
+//             _ = x;
+//
+//             let hue_deg = map_range(y, -1., 1., 0., 360.);
+//             *px = hsv_to_rgb(hue_deg, 1., 1.).to_argb8888();
+//         }
+//     }
+// }

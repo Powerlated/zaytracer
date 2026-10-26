@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use std::borrow::Cow;
-use ::raytracer::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use wgpu::Extent3d;
 use wgpu::TextureFormat::Bgra8UnormSrgb;
 use winit::application::ApplicationHandler;
@@ -12,8 +11,8 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
-use crate::raytracer::scalar::{MAX_ACCUMULATE_STEPS, RaytracerScalar};
-use crate::raytracer::simd::RaytracerSimd;
+use crate::raytracer::{HEIGHT, WIDTH, scalar::*};
+use crate::raytracer::simd::*;
 
 mod raytracer;
 
@@ -34,6 +33,7 @@ struct WgpuState {
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
 
+    // raytracer: raytracer::scalar::RaytracerScalar,
     raytracer: raytracer::simd::RaytracerSimd,
 
     raytrace_start_time: Option<std::time::Instant>,
@@ -95,8 +95,8 @@ impl WgpuState {
         let texture = device.create_texture(&wgpu::wgt::TextureDescriptor { 
             label: None, 
             size: wgpu::Extent3d {
-                width: WINDOW_WIDTH as u32,
-                height: WINDOW_HEIGHT as u32,
+                width: WIDTH as u32,
+                height: HEIGHT as u32,
                 depth_or_array_layers: 1
             }, 
             mip_level_count: 1,
@@ -201,10 +201,11 @@ impl WgpuState {
             surface_format,
             render_pipeline,
 
-            texture_data: vec![0u8; WINDOW_WIDTH * 4 * WINDOW_HEIGHT].into_boxed_slice(),
+            texture_data: vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
             texture,
             texture_bind_group,
 
+            // raytracer: RaytracerScalar::new(),
             raytracer: RaytracerSimd::from_scalar(RaytracerScalar::new()),
 
             raytrace_start_time: None,
@@ -257,9 +258,6 @@ impl WgpuState {
         drop(render_pass);
 
         // Cast self.texture_data into properly typed 2D array
-        let u32_slice: &mut [u32] = bytemuck::cast_slice_mut(&mut self.texture_data);
-        let flat_array_ref: &mut [u32; WINDOW_WIDTH * WINDOW_HEIGHT] = u32_slice.try_into().unwrap();
-        let buffer: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT] = bytemuck::cast_mut(flat_array_ref);
 
         if self.raytrace_start_time.is_none() {
             self.raytrace_start_time = Some(std::time::Instant::now());
@@ -267,7 +265,9 @@ impl WgpuState {
 
         // Do the raytrace, one ray per pixel
         // https://docs.amd.com/r/en-US/57368-uProf-user-guide/11.1.5.1.-Group2
-        let accumulated_samples = self.raytracer.raytrace_step(buffer);
+        let unboxed = &mut *self.texture_data;
+        let as_array = unboxed.try_into().unwrap();
+        let accumulated_samples = self.raytracer.raytrace_step(as_array);
 
         if accumulated_samples == MAX_ACCUMULATE_STEPS && self.raytrace_finish_time.is_none() {
             self.raytrace_finish_time = Some(std::time::Instant::now());
@@ -293,8 +293,8 @@ impl WgpuState {
             &self.texture_data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(TEXTURE_FORMAT.theoretical_memory_footprint(Extent3d { width: WINDOW_WIDTH as u32, height: 1, depth_or_array_layers: 1 }) as u32),
-                rows_per_image: Some(WINDOW_HEIGHT as u32),
+                bytes_per_row: Some(TEXTURE_FORMAT.theoretical_memory_footprint(Extent3d { width: WIDTH as u32, height: 1, depth_or_array_layers: 1 }) as u32),
+                rows_per_image: Some(HEIGHT as u32),
             },
             self.texture.size(),
         );
@@ -321,9 +321,9 @@ impl ApplicationHandler for App {
         let hidpi = arc_window.scale_factor() >= 1.5;
 
         let l_size = if hidpi {
-            winit::dpi::PhysicalSize::new((WINDOW_WIDTH * 2) as u32, (WINDOW_HEIGHT * 2) as u32)
+            winit::dpi::PhysicalSize::new((WIDTH * 2) as u32, (HEIGHT * 2) as u32)
         } else {
-            winit::dpi::PhysicalSize::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32)
+            winit::dpi::PhysicalSize::new(WIDTH as u32, HEIGHT as u32)
         };
         arc_window.set_max_inner_size(Some(l_size));
         arc_window.set_min_inner_size(Some(l_size));
