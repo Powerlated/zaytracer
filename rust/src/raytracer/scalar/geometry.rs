@@ -1,4 +1,4 @@
-use crate::raytracer::scalar::{MaterialShader, TriPerVertexShader, TriShader, math::{Mat33, Mat44, Vec3}};
+use crate::raytracer::scalar::{MaterialShader, TriShader, math::{Mat33, Mat44, Vec3}, shader::TriPerVertexShader};
 
 #[derive(Clone)]
 pub enum Geo {
@@ -122,7 +122,7 @@ impl Tri {
 
 #[cfg(test)]
 mod test {
-    use crate::raytracer::{MaterialShader, Tri, TriShader, math::Vec3};
+    use crate::raytracer::scalar::{geometry::Tri, math::Vec3, shader::{MaterialShader, TriShader}};
 
     const EPSILON: f32 = 1e-5;
     fn expect_intersect(tri: Tri, o: Vec3, d: Vec3, intersect_pos: [f32; 3], t: f32) {

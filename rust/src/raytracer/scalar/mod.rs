@@ -7,48 +7,18 @@ use std::simd::{f32x16, i32x16, simd_swizzle, u8x16, u32x16, u64x16};
 pub mod geometry;
 pub mod math;
 pub mod rng;
+pub mod shader;
 
 use rand::rngs::Xoshiro128PlusPlus;
 use rand::{Rng, SeedableRng};
 
-use crate::raytracer::scalar::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::geometry::{Geo, Intersection, IntersectionGeo, cube, square, transform_in_place};
 use crate::raytracer::scalar::math::{Mat33, Bgra, Vec3, deg_to_rad, hsv_to_rgb, map_range};
+use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
+use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
 use crate::{WINDOW_HEIGHT, WINDOW_WIDTH};
 
-#[derive(Clone)]
-struct MaterialShader {
-    color: Bgra,
-    emission: f32,
-}
-
-impl MaterialShader {
-    fn new_diffuse(r: f32, g: f32, b: f32) -> MaterialShader {
-        return Self { color: Bgra::from_rgb_f32(r, g, b), emission: 0.0 };
-    }
-
-    fn new_emissive(r: f32, g: f32, b: f32, emission: f32) -> MaterialShader {
-        return Self { color: Bgra::from_rgb_f32(r, g, b), emission: emission };
-    }
-}
-
-#[derive(Clone)]
-enum TriShader {
-    PerVertex(TriPerVertexShader),
-    Material(MaterialShader),
-}
-
-#[derive(Clone)]
-pub struct TriPerVertexShader {
-    // Per-vertex color
-    pub colors: [[f32; 4]; 3],
-}
-
 type GeoId = usize;
-
-struct GeosHandle {
-    val: usize,
-}
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
@@ -99,7 +69,6 @@ fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
 pub struct Raytracer {
     main_prng: Xoshiro128PlusPlus,
     geos: Vec<Geo>,
-    handle_to_geo_ids: Vec<Vec<GeoId>>,
     accumulator_buf: Box<[Bgra]>,
     accumulate_steps: u32,
 }
@@ -110,7 +79,6 @@ impl Raytracer {
             // start the PRNGs from 0 seed always
             main_prng: Xoshiro128PlusPlus::seed_from_u64(0),
             geos: Vec::new(),
-            handle_to_geo_ids: Vec::new(),
             accumulator_buf: vec![Bgra::zero(); WINDOW_HEIGHT * WINDOW_WIDTH as usize].into_boxed_slice(),
             accumulate_steps: 0,
         };
@@ -150,20 +118,10 @@ impl Raytracer {
         raytracer
     }
 
-    fn add_geos(&mut self, geos_to_add: &[Geo]) -> GeosHandle {
-        let mut geo_indices = Vec::with_capacity(geos_to_add.len());
-        for (i, _) in geos_to_add.iter().enumerate() { 
-            geo_indices.push(self.geos.len() + i); 
-        }
-
+    fn add_geos(&mut self, geos_to_add: &[Geo]) {
         for geo_to_add in geos_to_add {
             self.geos.push((*geo_to_add).clone());
         }
-
-        let handle_to_return = self.handle_to_geo_ids.len();
-        self.handle_to_geo_ids.push(geo_indices);
-
-        return GeosHandle { val: handle_to_return };
     }
 
     fn update_and_dither_output_buffer(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
@@ -368,28 +326,6 @@ impl Raytracer {
         }
 
         return Bgra::from_rgb_f32(0., 0., 0.);
-    }
-
-    fn consolidate_handles(&mut self, handles: &[GeosHandle]) -> GeosHandle {
-        let mut num_ids: usize = 0;
-        for handle in handles { num_ids += self.resolve_handle(handle).len(); }
-        let mut consolidated_ids = Vec::with_capacity(num_ids);
-
-        let mut i: usize = 0;
-        for handle in handles {
-            for geo_id in self.resolve_handle(handle) {
-                consolidated_ids[i] = *geo_id; 
-                i += 1;
-            }
-        }
-
-        self.handle_to_geo_ids.push(consolidated_ids);
-
-        return GeosHandle { val: self.handle_to_geo_ids.len() - 1 };
-    }    
-
-    fn resolve_handle(&mut self, handle: &GeosHandle) -> &Vec<GeoId> {
-        return &self.handle_to_geo_ids[handle.val];
     }
 }
 
