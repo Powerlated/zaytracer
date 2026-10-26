@@ -19,3 +19,6 @@ soa_derive = "0.14.0"
 thread-priority = "3.1.1"
 wgpu = "30.0.1"
 winit = "0.30.13"
+
+[profile.release]
+debug = true

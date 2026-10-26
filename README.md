@@ -13,6 +13,7 @@ The scene rendered for timings:
 
 ![Scene](image.png)
 
-| Commit Hash | Runtime  | Notes          |
-| ----------- | -------- | -------------- |
-| 8ab06df     | 32.846 s | No BVH, no SoA, autovectorization enabled with target-cpu-x86-64-v4 |
+| Commit Hash | Runtime  | Millions of cycles to trace one step | Notes                                                               |
+| ----------- | -------- | ------------------------------------ | ------------------------------------------------------------------- |
+| 8ab06df     | 32.846 s | 1250                                 | No BVH, no SoA, autovectorization enabled with target-cpu-x86-64-v4 |
+| 8ab06df     | N/A      | 1317                                 | Same as above, but on target-cpu-x86-64                             |
