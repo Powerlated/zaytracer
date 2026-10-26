@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use std::borrow::Cow;
+use ::raytracer::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use wgpu::Extent3d;
 use wgpu::TextureFormat::Bgra8UnormSrgb;
 use winit::application::ApplicationHandler;
@@ -38,9 +39,6 @@ struct WgpuState {
 }
 
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-
-pub const WINDOW_WIDTH: usize = 640;
-pub const WINDOW_HEIGHT: usize = 480;
 
 impl WgpuState {
     async fn init_wgpu(display: OwnedDisplayHandle, arc_window: Arc<Window>) -> WgpuState {
@@ -266,7 +264,8 @@ impl WgpuState {
         }
 
         // Do the raytrace, one ray per pixel
-        let accumulated_samples = self.raytracer.raytrace_image(buffer);
+        // https://docs.amd.com/r/en-US/57368-uProf-user-guide/11.1.5.1.-Group2
+        let accumulated_samples = self.raytracer.raytrace_step(buffer);
 
         if accumulated_samples == MAX_ACCUMULATE_STEPS && self.raytrace_finish_time.is_none() {
             self.raytrace_finish_time = Some(std::time::Instant::now());
@@ -353,7 +352,7 @@ impl ApplicationHandler for App {
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
-
+    
     // Move this thread onto the highest-numbered logical core
     let core_ids = core_affinity::get_core_ids().unwrap();
     core_affinity::set_for_current(*core_ids.last().unwrap());

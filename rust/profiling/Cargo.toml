@@ -1,0 +1,11 @@
+[package]
+name = "profiling"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+raytracer = { path = "../" }
+bytemuck = "1.25.2"
+
+[build-dependencies]
+bindgen = "0.73.2"

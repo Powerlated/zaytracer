@@ -4,10 +4,10 @@ use std::ops::Div;
 use rand::rngs::{Xoshiro128PlusPlus};
 use rand::{Rng, SeedableRng};
 
+mod math;
 use crate::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::raytracer::TriShader::{Material, PerVertex};
 use crate::raytracer::math::{Mat33, Mat44, Rgbf32, Vec3, deg_to_rad};
-mod math;
 
 #[derive(Clone)]
 struct MaterialShader {
@@ -554,7 +554,7 @@ impl Raytracer {
         }
     }
 
-    pub fn raytrace_image(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) -> u32 {
+    pub fn raytrace_step(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) -> u32 {
         if self.accumulate_steps < MAX_ACCUMULATE_STEPS  {
             // **First, trace one ray per pixel, and then update the accumulator
             // buffer with the cumulative average.**
