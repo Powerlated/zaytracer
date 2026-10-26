@@ -12,7 +12,8 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
-use crate::raytracer::scalar::{MAX_ACCUMULATE_STEPS, Raytracer};
+use crate::raytracer::scalar::{MAX_ACCUMULATE_STEPS, RaytracerScalar};
+use crate::raytracer::simd::RaytracerSimd;
 
 mod raytracer;
 
@@ -33,7 +34,7 @@ struct WgpuState {
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
 
-    raytracer: raytracer::scalar::Raytracer,
+    raytracer: raytracer::simd::RaytracerSimd,
 
     raytrace_start_time: Option<std::time::Instant>,
     raytrace_finish_time: Option<std::time::Instant>,
@@ -204,7 +205,7 @@ impl WgpuState {
             texture,
             texture_bind_group,
 
-            raytracer: Raytracer::new(),
+            raytracer: RaytracerSimd::from_scalar(RaytracerScalar::new()),
 
             raytrace_start_time: None,
             raytrace_finish_time: None,

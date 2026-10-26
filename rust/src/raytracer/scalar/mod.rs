@@ -66,14 +66,14 @@ fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
     return (int as f32) / (0xFFFFFFFFu32 as f32);
 }
 
-pub struct Raytracer {
-    main_prng: Xoshiro128PlusPlus,
-    geos: Vec<Geo>,
-    accumulator_buf: Box<[Bgra]>,
-    accumulate_steps: u32,
+pub struct RaytracerScalar {
+    pub main_prng: Xoshiro128PlusPlus,
+    pub geos: Vec<Geo>,
+    pub accumulator_buf: Box<[Bgra]>,
+    pub accumulate_steps: u32,
 }
 
-impl Raytracer {
+impl RaytracerScalar {
     pub fn new() -> Self {
         let mut raytracer = Self {
             // start the PRNGs from 0 seed always
