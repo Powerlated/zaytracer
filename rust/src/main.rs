@@ -32,6 +32,9 @@ struct WgpuState {
     texture_bind_group: wgpu::BindGroup,
 
     raytracer: raytracer::Raytracer,
+
+    raytrace_start_time: Option<std::time::Instant>,
+    raytrace_finish_time: Option<std::time::Instant>,
 }
 
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
@@ -203,6 +206,9 @@ impl WgpuState {
             texture_bind_group,
 
             raytracer: Raytracer::new(),
+
+            raytrace_start_time: None,
+            raytrace_finish_time: None,
         }
     }
 
@@ -255,8 +261,31 @@ impl WgpuState {
         let flat_array_ref: &mut [u32; WINDOW_WIDTH * WINDOW_HEIGHT] = u32_slice.try_into().unwrap();
         let buffer: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT] = bytemuck::cast_mut(flat_array_ref);
 
+        if self.raytrace_start_time.is_none() {
+            self.raytrace_start_time = Some(std::time::Instant::now());
+        }
+
+        // Do the raytrace, one ray per pixel
         let accumulated_samples = self.raytracer.raytrace_image(buffer);
-        self.arc_window.set_title(format!("Brian Jia - Raytracer [{}/{}]", accumulated_samples, MAX_ACCUMULATE_STEPS).as_str());
+
+        if accumulated_samples == MAX_ACCUMULATE_STEPS && self.raytrace_finish_time.is_none() {
+            self.raytrace_finish_time = Some(std::time::Instant::now());
+        }
+
+        let suffix;
+        if let Some(raytrace_finish_time) = self.raytrace_finish_time
+         && let Some(raytrace_start_time) = self.raytrace_start_time {
+            // If raytracing is done
+            suffix = format!("{:.3} s", (raytrace_finish_time - raytrace_start_time).as_secs_f64());
+        } else if let Some(raytrace_start_time) = self.raytrace_start_time {
+            // If raytracing is ongoing
+            suffix = format!("{} s", raytrace_start_time.elapsed().as_secs());
+        } else {
+            // If raytracing has not started yet
+            suffix = "".to_string();
+        }
+
+        self.arc_window.set_title(format!("Brian Jia - Raytracer [{}/{}] {}", accumulated_samples, MAX_ACCUMULATE_STEPS, suffix).as_str());
 
         self.queue.write_texture(
             self.texture.as_image_copy(),

@@ -770,5 +770,5 @@ pub fn rainbow(buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
     }
 }
 
-pub const MAX_ACCUMULATE_STEPS: u32 = 1024;
+pub const MAX_ACCUMULATE_STEPS: u32 = 128;
 const DITHER_DIVISOR: usize = 256;
