@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use core::convert::Infallible;
-use std::{ops::{Add, Shl}, simd::{num::SimdUint, simd_swizzle, u32x8, u32x16, u64x16}};
+use std::{ops::{Add, Shl}, simd::{num::SimdUint, *}};
 
 /// A xoshiro128++ random number generator.
 ///
@@ -20,7 +20,7 @@ use std::{ops::{Add, Shl}, simd::{num::SimdUint, simd_swizzle, u32x8, u32x16, u6
 /// David Blackman and Sebastiano Vigna.
 /// 
 pub struct Xoshiro128PlusPlusSimd {
-    s: [u32x16; 4],
+    s: [u32x4; 4],
 }
 
 impl Xoshiro128PlusPlusSimd {
@@ -28,14 +28,14 @@ impl Xoshiro128PlusPlusSimd {
     ///
     /// This uses the SplitMix64 generator internally.
     #[inline]
-    pub fn seed_from_u64(mut state: u64x16) -> Self {
-        const PHI: u64x16 = u64x16::splat(0x9e3779b97f4a7c15);
-        let mut s = [u32x16::default(); 4];
+    pub fn seed_from_u64(mut state: u64x4) -> Self {
+        const PHI: u64x4 = u64x4::splat(0x9e3779b97f4a7c15);
+        let mut s = [u32x4::default(); 4];
         for i in s.chunks_exact_mut(2) {
             state += PHI;
             let mut z = state;
-            z = (z ^ (z >> 30)) * u64x16::splat(0xbf58476d1ce4e5b9);
-            z = (z ^ (z >> 27)) * u64x16::splat(0x94d049bb133111eb);
+            z = (z ^ (z >> 30)) * u64x4::splat(0xbf58476d1ce4e5b9);
+            z = (z ^ (z >> 27)) * u64x4::splat(0x94d049bb133111eb);
             z = z ^ (z >> 31);
             i[0] = z.cast::<u32>();
             i[1] = (z >> 32).cast::<u32>();
@@ -44,7 +44,7 @@ impl Xoshiro128PlusPlusSimd {
         Xoshiro128PlusPlusSimd { s }
     }
 
-    pub fn next_u32(&mut self) -> u32x16 {
+    pub fn next_u32(&mut self) -> u32x4 {
         let intermed = self.s[0] + self.s[3];
         let res = ((intermed << 7) | (intermed >> (32 - 7))) + self.s[0];
 

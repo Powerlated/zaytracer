@@ -1,3 +1,5 @@
+use std::ops::*;
+
 use bytemuck::{Pod, Zeroable};
 
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
@@ -95,22 +97,33 @@ impl Vec3 {
     }
 }
 
-#[derive(Clone, Copy, Default, Pod, Zeroable)]
-#[repr(C)]
-pub struct Bgra {
-    pub val: [f32; 4]
-}
+#[derive(Clone, Copy, Default, Pod, Zeroable, Debug)]
+#[repr(transparent)]
+pub struct Bgra<T> {
+    pub val: [T; 4]
+} 
 
-impl Bgra {
-    pub fn from_rgb_f32(r: f32, g: f32, b: f32) -> Bgra {
+pub type Bgraf32 = Bgra<f32>;
+
+impl Bgraf32 {
+    pub fn from_rgb_f32(r: f32, g: f32, b: f32) -> Bgraf32 {
         return Bgra { val: [b, g, r, 1.0] };
     }
 
-    pub fn zero() -> Bgra {
-        return Bgra { val: [0.0, 0.0, 0.0, 0.0] };
+    pub fn zero() -> Bgraf32 {
+        return Bgra { val: [0., 0., 0., 0.] };
     }
 
-    pub fn add(self: Bgra, b: Bgra) -> Bgra {
+    pub fn to_argb8888(self) -> [u8; 4] {
+        return [Self::color_f32_to_255(self.val[0]),
+                Self::color_f32_to_255(self.val[1]),
+                Self::color_f32_to_255(self.val[2]),
+                Self::color_f32_to_255(self.val[3])];
+    }
+}
+
+impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy> Bgra<T> {
+    pub fn add(self: Bgra<T>, b: Bgra<T>) -> Bgra<T> {
         return Bgra { val: [
             self.val[0] + b.val[0],
             self.val[1] + b.val[1],
@@ -119,7 +132,7 @@ impl Bgra {
         ]};
     }
 
-    pub fn sub(self: Bgra, b: Bgra) -> Bgra {
+    pub fn sub(self: Bgra<T>, b: Bgra<T>) -> Bgra<T> {
         return Bgra { val: [
             self.val[0] - b.val[0],
             self.val[1] - b.val[1],
@@ -128,7 +141,7 @@ impl Bgra {
         ]};
     }
 
-    pub fn mul_scalar(self: Bgra, b: f32) -> Bgra {
+    pub fn mul_scalar(self: Bgra<T>, b: T) -> Bgra<T> {
         return Bgra { val: [
             self.val[0] * b,
             self.val[1] * b,
@@ -137,7 +150,7 @@ impl Bgra {
         ]};
     }
 
-    pub fn mul_elementwise(self: Bgra, b: Bgra) -> Bgra {
+    pub fn mul_elementwise(self: Bgra<T>, b: Bgra<T>) -> Bgra<T> {
         return Bgra { val: [
             self.val[0] * b.val[0],
             self.val[1] * b.val[1],
@@ -146,40 +159,24 @@ impl Bgra {
         ]};
     }
 
-    pub fn div(self: Bgra, b: f32) -> Bgra {
+    pub fn div_scalar(self: Bgra<T>, b: T) -> Bgra<T> {
         return Bgra { val: [
             self.val[0] / b,
             self.val[1] / b,
             self.val[2] / b,
             self.val[3] / b,
         ]};
-    }
-    
-    pub fn div_scalar(self: Bgra, b: f32) -> Bgra {
-        return Bgra { val: [
-            self.val[0] / b,
-            self.val[1] / b,
-            self.val[2] / b,
-            self.val[3] / b,
-        ]};
-    }
+    }    
 
     pub fn color_f32_to_255(color_f32: f32) -> u8 {
         return (f32::clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5) as u8;
-    }
-
-    pub fn to_argb8888(self: &Bgra) -> [u8; 4] {
-        return [Self::color_f32_to_255(self.val[0]),
-                Self::color_f32_to_255(self.val[1]),
-                Self::color_f32_to_255(self.val[2]),
-                Self::color_f32_to_255(self.val[3])];
     }
 }
 
 /// h: [0, 360)
 /// s: [0, 1]
 /// v: [0, 1]
-pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Bgra {
+pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Bgraf32 {
     assert!(h >= 0. && h < 360.);
     assert!(s >= 0. && s <= 1.);
     assert!(v >= 0. && v <= 1.);
@@ -194,23 +191,23 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Bgra {
     let m = v - c;
 
     // r', g', b'
-    let p: Bgra;
+    let p: Bgraf32;
 
     if h < 60.  {
-        p = Bgra::from_rgb_f32(c, x, 0.);
+        p = Bgraf32::from_rgb_f32(c, x, 0.);
     } else if h < 120.  {
-        p = Bgra::from_rgb_f32(x, c, 0.);
+        p = Bgraf32::from_rgb_f32(x, c, 0.);
     } else if h < 180.  {
-        p = Bgra::from_rgb_f32(0., c, x);
+        p = Bgraf32::from_rgb_f32(0., c, x);
     } else if h < 240.  {
-        p = Bgra::from_rgb_f32(0., x, c);
+        p = Bgraf32::from_rgb_f32(0., x, c);
     } else if h < 300.  {
-        p = Bgra::from_rgb_f32(x, 0., c);
+        p = Bgraf32::from_rgb_f32(x, 0., c);
     } else {
-        p = Bgra::from_rgb_f32(c, 0., x);
+        p = Bgraf32::from_rgb_f32(c, 0., x);
     }
 
-    return p.add(Bgra::from_rgb_f32(m, m, m));
+    return p.add(Bgraf32::from_rgb_f32(m, m, m));
 }
 
 #[derive(Clone, Copy)]

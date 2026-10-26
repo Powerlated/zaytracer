@@ -2,66 +2,206 @@
 
 use std::{arch::x86_64::*, ops::*};
 
-pub struct F32x8 (__m512);
+use crate::raytracer::scalar::math::Bgraf32;
 
-impl From<f32> for F32x8 {
-    fn from(scalar: f32) -> F32x8 {
-        unsafe { F32x8(_mm512_set1_ps(scalar)) }
+pub struct U8x16 (pub __m128i);
+
+impl From<F32x16> for U8x16 {
+    fn from(v: F32x16) -> U8x16 {
+        unsafe { U8x16(_mm512_cvtusepi32_epi8(_mm512_cvtps_epu32(v.0))) }
     }
 }
 
-impl Add<F32x8> for F32x8 {
-    type Output = F32x8;
-    fn add(self, _rhs: F32x8) -> F32x8 {
-        unsafe { F32x8(_mm512_add_ps(self.0, _rhs.0)) }
+impl Into<[u8; 16]> for U8x16 {
+    fn into(self) -> [u8; 16] {
+        let mut array = [0u8; 16];
+        unsafe { _mm_storeu_epi8(array.as_mut_ptr() as *mut i8, self.0); }
+        return array;
     }
 }
 
-impl Add<f32> for F32x8 {
-    type Output = F32x8;
-    fn add(self, _rhs: f32) -> F32x8 {
-        unsafe { F32x8(_mm512_add_ps(self.0, _mm512_set1_ps(_rhs))) }
+pub struct F32x16 (pub __m512);
+
+impl F32x16 {
+    pub const WIDTH: usize = 16;
+
+    pub fn splat(v: F32x4) -> F32x16 {
+        unsafe { F32x16(_mm512_broadcast_f32x4(v.0)) }
+    }
+
+    pub fn min<T: Into<Self>>(self, b: T) -> F32x16 {
+        unsafe { F32x16(_mm512_min_ps(self.0, b.into().0)) }
+    }
+
+    pub fn max<T: Into<Self>>(self, b: T) -> F32x16 {
+        unsafe { F32x16(_mm512_max_ps(self.0, b.into().0)) }
+    }
+
+    pub fn clamp<T: Into<Self>>(self, min: T, max: T) -> F32x16 {
+        Self::max(min.into(), Self::min(self, max))
     }
 }
 
-impl Sub<F32x8> for F32x8 {
-    type Output = F32x8;
-    fn sub(self, _rhs: F32x8) -> F32x8 {
-        unsafe { F32x8(_mm512_sub_ps(self.0, _rhs.0)) }
+impl From<f32> for F32x16 {
+    fn from(scalar: f32) -> F32x16 {
+        unsafe { F32x16(_mm512_set1_ps(scalar)) }
     }
 }
 
-impl Sub<f32> for F32x8 {
-    type Output = F32x8;
-    fn sub(self, _rhs: f32) -> F32x8 {
-        unsafe { F32x8(_mm512_sub_ps(self.0, _mm512_set1_ps(_rhs))) }
+impl From<std::simd::u32x16> for F32x16 {
+    fn from(v: std::simd::u32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_cvtepu32_ps(v.into())) }
     }
 }
 
-impl Mul<F32x8> for F32x8 {
-    type Output = F32x8;
-    fn mul(self, _rhs: F32x8) -> F32x8 {
-        unsafe { F32x8(_mm512_sub_ps(self.0, _rhs.0)) }
+impl Into<[f32; 16]> for F32x16 {
+    fn into(self) -> [f32; 16] {
+        let mut array = [0f32; 16];
+        unsafe { _mm512_store_ps(array.as_mut_ptr(), self.0); }
+        return array;
+    }
+} 
+
+impl From<&[f32; 16]> for F32x16 {
+    fn from(v: &[f32; 16]) -> F32x16 {
+        unsafe { F32x16(_mm512_loadu_ps(v.as_ptr())) }
     }
 }
 
-impl Mul<f32> for F32x8 {
-    type Output = F32x8;
-    fn mul(self, _rhs: f32) -> F32x8 {
-        unsafe { F32x8(_mm512_mul_ps(self.0, _mm512_set1_ps(_rhs))) }
+impl Add<F32x16> for F32x16 {
+    type Output = F32x16;
+    fn add(self, _rhs: F32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_add_ps(self.0, _rhs.0)) }
     }
 }
 
-impl Div<F32x8> for F32x8 {
-    type Output = F32x8;
-    fn div(self, _rhs: F32x8) -> F32x8 {
-        unsafe { F32x8(_mm512_div_ps(self.0, _rhs.0)) }
+impl Add<f32> for F32x16 {
+    type Output = F32x16;
+    fn add(self, _rhs: f32) -> F32x16 {
+        unsafe { F32x16(_mm512_add_ps(self.0, _mm512_set1_ps(_rhs))) }
     }
 }
 
-impl Div<f32> for F32x8 {
-    type Output = F32x8;
-    fn div(self, _rhs: f32) -> F32x8 {
-        unsafe { F32x8(_mm512_div_ps(self.0, _mm512_set1_ps(_rhs))) }
+impl Sub<F32x16> for F32x16 {
+    type Output = F32x16;
+    fn sub(self, _rhs: F32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_sub_ps(self.0, _rhs.0)) }
+    }
+}
+
+impl Sub<f32> for F32x16 {
+    type Output = F32x16;
+    fn sub(self, _rhs: f32) -> F32x16 {
+        unsafe { F32x16(_mm512_sub_ps(self.0, _mm512_set1_ps(_rhs))) }
+    }
+}
+
+impl Mul<F32x16> for F32x16 {
+    type Output = F32x16;
+    fn mul(self, _rhs: F32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_mul_ps(self.0, _rhs.0)) }
+    }
+}
+
+impl Mul<f32> for F32x16 {
+    type Output = F32x16;
+    fn mul(self, _rhs: f32) -> F32x16 {
+        unsafe { F32x16(_mm512_mul_ps(self.0, _mm512_set1_ps(_rhs))) }
+    }
+}
+
+impl Div<F32x16> for F32x16 {
+    type Output = F32x16;
+    fn div(self, _rhs: F32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_div_ps(self.0, _rhs.0)) }
+    }
+}
+
+impl Div<f32> for F32x16 {
+    type Output = F32x16;
+    fn div(self, _rhs: f32) -> F32x16 {
+        unsafe { F32x16(_mm512_div_ps(self.0, _mm512_set1_ps(_rhs))) }
+    }
+}
+
+pub struct F32x4 (pub __m128);
+
+impl From<&Bgraf32> for F32x4 {
+    fn from(bgraf32: &Bgraf32) -> F32x4 {
+        unsafe { F32x4(_mm_loadu_ps(bgraf32.val.as_ptr()) )}
+    }
+}
+
+impl From<f32> for F32x4 {
+    fn from(scalar: f32) -> F32x4 {
+        unsafe { F32x4(_mm_set1_ps(scalar)) }
+    }   
+}
+
+impl From<std::simd::u32x4> for F32x4 {
+    fn from(v: std::simd::u32x4) -> F32x4 {
+        unsafe { F32x4(_mm_cvtepi32_ps(v.into())) }
+    }
+}
+
+impl From<&[f32; 4]> for F32x4 {
+    fn from(v: &[f32; 4]) -> F32x4 {
+        unsafe { F32x4(_mm_loadu_ps(v.as_ptr())) }
+    }
+}
+
+impl Add<F32x4> for F32x4 {
+    type Output = F32x4;
+    fn add(self, _rhs: F32x4) -> F32x4 {
+        unsafe { F32x4(_mm_add_ps(self.0, _rhs.0)) }
+    }
+}
+
+impl Add<f32> for F32x4 {
+    type Output = F32x4;
+    fn add(self, _rhs: f32) -> F32x4 {
+        unsafe { F32x4(_mm_add_ps(self.0, _mm_set1_ps(_rhs))) }
+    }
+}
+
+impl Sub<F32x4> for F32x4 {
+    type Output = F32x4;
+    fn sub(self, _rhs: F32x4) -> F32x4 {
+        unsafe { F32x4(_mm_sub_ps(self.0, _rhs.0)) }
+    }
+}
+
+impl Sub<f32> for F32x4 {
+    type Output = F32x4;
+    fn sub(self, _rhs: f32) -> F32x4 {
+        unsafe { F32x4(_mm_sub_ps(self.0, _mm_set1_ps(_rhs))) }
+    }
+}
+
+impl Mul<F32x4> for F32x4 {
+    type Output = F32x4;
+    fn mul(self, _rhs: F32x4) -> F32x4 {
+        unsafe { F32x4(_mm_mul_ps(self.0, _rhs.0)) }
+    }
+}
+
+impl Mul<f32> for F32x4 {
+    type Output = F32x4;
+    fn mul(self, _rhs: f32) -> F32x4 {
+        unsafe { F32x4(_mm_mul_ps(self.0, _mm_set1_ps(_rhs))) }
+    }
+}
+
+impl Div<F32x4> for F32x4 {
+    type Output = F32x4;
+    fn div(self, _rhs: F32x4) -> F32x4 {
+        unsafe { F32x4(_mm_div_ps(self.0, _rhs.0)) }
+    }
+}
+
+impl Div<f32> for F32x4 {
+    type Output = F32x4;
+    fn div(self, _rhs: f32) -> F32x4 {
+        unsafe { F32x4(_mm_div_ps(self.0, _mm_set1_ps(_rhs))) }
     }
 }

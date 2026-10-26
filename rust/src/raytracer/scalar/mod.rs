@@ -14,7 +14,7 @@ use rand::{Rng, SeedableRng};
 
 use crate::raytracer::*;
 use crate::raytracer::scalar::geometry::{Geo, Intersection, IntersectionGeo, cube, square, transform_in_place};
-use crate::raytracer::scalar::math::{Mat33, Bgra, Vec3, deg_to_rad, hsv_to_rgb, map_range};
+use crate::raytracer::scalar::math::{Mat33, Bgraf32, Vec3, deg_to_rad, hsv_to_rgb, map_range};
 use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
 
@@ -69,7 +69,7 @@ fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
 pub struct RaytracerScalar {
     pub main_prng: Xoshiro128PlusPlus,
     pub geos: Vec<Geo>,
-    pub accumulator_buf: Box<[Bgra]>,
+    pub accumulator_buf: Box<[Bgraf32]>,
     pub accumulate_steps: u32,
 }
 
@@ -79,7 +79,7 @@ impl RaytracerScalar {
             // start the PRNGs from 0 seed always
             main_prng: Xoshiro128PlusPlus::seed_from_u64(0),
             geos: Vec::new(),
-            accumulator_buf: vec![Bgra::zero(); HEIGHT * WIDTH as usize].into_boxed_slice(),
+            accumulator_buf: vec![Bgraf32::zero(); HEIGHT * WIDTH as usize].into_boxed_slice(),
             accumulate_steps: 0,
         };
 
@@ -139,8 +139,8 @@ impl RaytracerScalar {
 
                 let scaled = self.accumulator_buf[row * WIDTH + col]
                             .div_scalar(self.accumulate_steps as f32);
-                        
-                let dithered = scaled.add(Bgra {val: [
+
+                let dithered = scaled.add(Bgraf32 {val: [
                     uniform_rect_dist,
                     uniform_rect_dist,
                     uniform_rect_dist,
@@ -193,7 +193,7 @@ impl RaytracerScalar {
     // `norm_x` and `norm_y` are Vulkan-style normalized
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
-    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Bgra {
+    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Bgraf32 {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
 
@@ -217,8 +217,8 @@ impl RaytracerScalar {
 
     // **Inner raytracing loop** :D
     const MAX_BOUNCES: u8 = 16;
-    fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Bgra {
-        if bounces > Self::MAX_BOUNCES  { return Bgra::from_rgb_f32(0., 0., 0.); }
+    fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Bgraf32 {
+        if bounces > Self::MAX_BOUNCES  { return Bgraf32::from_rgb_f32(0., 0., 0.); }
 
         let mut closest_inter_t: f32 = 1000.0;
         let mut maybe_closest_inter: Option<Intersection> = None;
@@ -279,9 +279,9 @@ impl RaytracerScalar {
 
                             // make it much brighter if it's indirect bounce
                             if bounces > 0  {
-                                return Bgra::from_rgb_f32(r, g, b).mul_scalar(10.);
+                                return Bgraf32::from_rgb_f32(r, g, b).mul_scalar(10.);
                             } else {
-                                return Bgra::from_rgb_f32(r, g, b);
+                                return Bgraf32::from_rgb_f32(r, g, b);
                             }
                         },
                         Material(material) => {
@@ -332,7 +332,7 @@ impl RaytracerScalar {
             }
         }
 
-        return Bgra::from_rgb_f32(0., 0., 0.);
+        return Bgraf32::from_rgb_f32(0., 0., 0.);
     }
 }
 

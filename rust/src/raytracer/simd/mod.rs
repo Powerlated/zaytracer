@@ -5,17 +5,21 @@ use std::arch::x86_64::*;
 use std::f32::consts::PI;
 use std::ops::Div;
 use std::simd::num::{SimdFloat, SimdUint};
-use std::simd::{f32x16, i32x16, simd_swizzle, u8x16, u32x16, u64x16};
+use std::simd::{f32x16, i32x16, simd_swizzle, u8x16, u32x16, u64x4, u64x16};
 
 use rand::rngs::Xoshiro128PlusPlus;
 use rand::{Rng, SeedableRng};
 
-use crate::raytracer::*;
 use crate::raytracer::scalar::RaytracerScalar;
-use crate::raytracer::scalar::geometry::{Geo, Intersection, IntersectionGeo, cube, square, transform_in_place};
-use crate::raytracer::scalar::math::{Mat33, Bgra, Vec3, deg_to_rad, hsv_to_rgb, map_range};
+use crate::raytracer::scalar::geometry::{
+    Geo, Intersection, IntersectionGeo, cube, square, transform_in_place,
+};
+use crate::raytracer::scalar::math::{Bgraf32, Mat33, Vec3, deg_to_rad, hsv_to_rgb, map_range};
 use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
+use crate::raytracer::simd::avx512::*;
+use crate::raytracer::simd::rng_portable_simd::Xoshiro128PlusPlusSimd;
+use crate::raytracer::*;
 
 type GeoId = usize;
 
@@ -28,7 +32,7 @@ fn random_jitter(prng: &mut Xoshiro128PlusPlus) -> (f32, f32) {
     return (
         (x_jitter_int as f32) / (0xFFFFFFFFu32 as f32) - 0.5,
         (y_jitter_int as f32) / (0xFFFFFFFFu32 as f32) - 0.5,
-    )
+    );
 }
 
 // 3D vector that is evenly distributed on the unit sphere
@@ -38,13 +42,13 @@ fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
         let next = ((prng.next_u32() as u64) << 32) | (prng.next_u32() as u64);
 
         // split it in three to get three 21-bit vars where each bit is I.I.D.
-        let xyz_int: [u64; 3] = [next & 0x1FFFFF,
-                                (next >> 21) & 0x1FFFFF,
-                                (next >> 42) & 0x1FFFFF];
+        let xyz_int: [u64; 3] = [
+            next & 0x1FFFFF,
+            (next >> 21) & 0x1FFFFF,
+            (next >> 42) & 0x1FFFFF,
+        ];
 
-        let mut xyz_float = Vec3::from_xyz(xyz_int[0] as f32,
-                                            xyz_int[1] as f32,
-                                            xyz_int[2] as f32);
+        let mut xyz_float = Vec3::from_xyz(xyz_int[0] as f32, xyz_int[1] as f32, xyz_int[2] as f32);
 
         xyz_float = xyz_float
             .div_scalar(0x1FFFFF as f32)
@@ -52,8 +56,8 @@ fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
             .mul_scalar(2.0);
 
         let xyz_magn = xyz_float.magn();
-        
-        if xyz_magn <= 1.0 && xyz_magn > 0.01  {
+
+        if xyz_magn <= 1.0 && xyz_magn > 0.01 {
             return xyz_float.normalize();
         }
     }
@@ -65,10 +69,12 @@ fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
     return (int as f32) / (0xFFFFFFFFu32 as f32);
 }
 
+const ACCUMULATOR_BUF_LEN: usize = HEIGHT * WIDTH as usize;
+
 pub struct RaytracerSimd {
     main_prng: Xoshiro128PlusPlus,
     geos: Vec<Geo>,
-    accumulator_buf: Box<[Bgra]>,
+    accumulator_buf: Box<[Bgraf32; ACCUMULATOR_BUF_LEN]>,
     accumulate_steps: u32,
 }
 
@@ -78,44 +84,46 @@ impl RaytracerSimd {
             // start the PRNGs from 0 seed always
             main_prng: Xoshiro128PlusPlus::seed_from_u64(0),
             geos: raytracer_scalar.geos,
-            accumulator_buf: vec![Bgra::zero(); HEIGHT * WIDTH as usize].into_boxed_slice(),
+            accumulator_buf: vec![Bgraf32::zero(); ACCUMULATOR_BUF_LEN]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap(),
             accumulate_steps: 0,
         }
     }
 
     fn update_and_dither_output_buffer(&mut self, buf: &mut RaytracerBuf) {
-        let mut dither_prng = rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0);
+        let mut dither_prng = Xoshiro128PlusPlusSimd::seed_from_u64(u64x4::from(
+            std::array::from_fn::<u64, 4, _>(|i| i as u64),
+        ));
 
-        for row in 0..HEIGHT {
-            for col in 0..WIDTH {
-                // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-                let next = dither_prng.next_u64();
+        let acc_buf: &mut [[f32; 16]] = bytemuck::cast_slice_mut(&mut *self.accumulator_buf);
+        let out_buf: &mut [[u8; 16]] = bytemuck::cast_slice_mut(buf);
 
-                // get bottom half to get a 32-bit var where each bit is I.I.D.
-                let int = next & 0xFFFFFFFF;
-                let uniform_rect_dist = ((int as f32) / (0xFFFFFFFFu32 as f32) - 0.5)
-                                        * (1. / (DITHER_DIVISOR as f32));
+        for (acc, out) in acc_buf.iter().zip(out_buf.iter_mut()) {
+            let int = dither_prng.next_u32();
 
-                let scaled = self.accumulator_buf[row * WIDTH + col]
-                            .div_scalar(self.accumulate_steps as f32);
-                let dithered = scaled.add(Bgra {val: [
-                    uniform_rect_dist,
-                    uniform_rect_dist,
-                    uniform_rect_dist,
-                    0.0,
-                ]});
+            let uniform_rect_dist = (F32x4::from(int) / (0xFFFFFFFFu32 as f32) - 0.5)
+                * (1. / (DITHER_DIVISOR as f32));
 
-                let buf_offset = row * STRIDE + col * BYTES_PER_PIXEL;
-                let px: &mut [u8; 4] = (&mut buf[buf_offset..buf_offset+BYTES_PER_PIXEL])
-                                        .try_into().unwrap();
+            let scaled_f32 = F32x16::from(acc) / (self.accumulate_steps as f32);
 
-                *px = dithered.to_argb8888();
-            }
-        }   
+            let swizzled = unsafe {
+                _mm512_permutexvar_ps(_mm512_set_epi32(
+                    3,3,3,3, 2,2,2,2, 1,1,1,1, 0,0,0,0,
+                ), _mm512_broadcast_f32x4(uniform_rect_dist.0))
+            };
+
+            let dithered_f32 = scaled_f32 + F32x16(swizzled);
+            let color_255: U8x16 = ((dithered_f32.clamp(0.0, 1.0) * 255.0) + 0.5).into();
+
+            let x: [u8; 16] = color_255.into();
+            out.copy_from_slice(&x);
+        }
     }
 
     pub fn raytrace_step(&mut self, buf: &mut RaytracerBuf) -> u32 {
-        if self.accumulate_steps < MAX_ACCUMULATE_STEPS  {
+        if self.accumulate_steps < MAX_ACCUMULATE_STEPS {
             for row in 0..HEIGHT {
                 // map row to normalized y coordinates
                 //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
@@ -132,8 +140,10 @@ impl RaytracerSimd {
                     let norm_y = map_range(row_jittered, 0., HEIGHT as f32, -1., 1.);
                     let norm_x = map_range(col_jittered, 0., WIDTH as f32, -1., 1.);
 
+                    // trace the ray
+                    let mut new_px = self.zaytrace_image_inner(norm_x, norm_y);
+
                     // perform antialiasing accumulate
-                    let new_px = self.zaytrace_image_inner(norm_x, norm_y);
                     let acc_px = &mut self.accumulator_buf[row * WIDTH + col];
                     *acc_px = (*acc_px).add(new_px);
                 }
@@ -142,7 +152,6 @@ impl RaytracerSimd {
             // **Then, update the output buffer while dithering it.**
             self.accumulate_steps += 1;
             self.update_and_dither_output_buffer(buf);
-
         }
 
         return self.accumulate_steps;
@@ -151,7 +160,7 @@ impl RaytracerSimd {
     // `norm_x` and `norm_y` are Vulkan-style normalized
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
-    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Bgra {
+    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Bgraf32 {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
 
@@ -175,22 +184,34 @@ impl RaytracerSimd {
 
     // **Inner raytracing loop** :D
     const MAX_BOUNCES: u8 = 16;
-    fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Bgra {
-        if bounces > Self::MAX_BOUNCES  { return Bgra::from_rgb_f32(0., 0., 0.); }
+    fn zaytrace_ray(
+        &mut self,
+        maybe_origin_geo_id: Option<GeoId>,
+        ray_pos: Vec3,
+        ray_dir: Vec3,
+        bounces: u8,
+    ) -> Bgraf32 {
+        if bounces > Self::MAX_BOUNCES {
+            return Bgraf32::from_rgb_f32(0., 0., 0.);
+        }
 
         let mut closest_inter_t: f32 = 1000.0;
         let mut maybe_closest_inter: Option<Intersection> = None;
         let mut maybe_closest_inter_geo_id: Option<GeoId> = None;
 
         for (geo_id, geo) in self.geos.iter().enumerate() {
-            if let Some(origin_geo_id) = maybe_origin_geo_id && origin_geo_id == geo_id { continue };
+            if let Some(origin_geo_id) = maybe_origin_geo_id
+                && origin_geo_id == geo_id
+            {
+                continue;
+            };
 
-            match geo  {
+            match geo {
                 Geo::Tri(tri) => {
                     if let Some((inter, tri_inter)) = tri.intersect(ray_pos, ray_dir) {
-                        if inter.t < closest_inter_t  {
+                        if inter.t < closest_inter_t {
                             // TODO: alpha only applies to direct rays so far. add separate indirect/direct bounce settings
-                            if bounces == 0  {
+                            if bounces == 0 {
                                 match &tri.shader {
                                     PerVertex(per_vertex) => {
                                         let w = tri_inter.w;
@@ -198,12 +219,13 @@ impl RaytracerSimd {
                                         let u = tri_inter.u;
 
                                         let colors = per_vertex.colors;
-                                        let a = w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
+                                        let a =
+                                            w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
 
-                                        if a > random_alpha(&mut self.main_prng)  {
+                                        if a > random_alpha(&mut self.main_prng) {
                                             continue;
                                         }
-                                    },
+                                    }
                                     _ => {}
                                 }
                             }
@@ -213,8 +235,8 @@ impl RaytracerSimd {
                             maybe_closest_inter_geo_id = Some(geo_id);
                         }
                     }
-                },
-                _ => unimplemented!()
+                }
+                _ => unimplemented!(),
             }
         }
 
@@ -236,16 +258,16 @@ impl RaytracerSimd {
                             let b = w * colors[0][2] + v * colors[1][2] + u * colors[2][2];
 
                             // make it much brighter if it's indirect bounce
-                            if bounces > 0  {
-                                return Bgra::from_rgb_f32(r, g, b).mul_scalar(10.);
+                            if bounces > 0 {
+                                return Bgraf32::from_rgb_f32(r, g, b).mul_scalar(10.);
                             } else {
-                                return Bgra::from_rgb_f32(r, g, b);
+                                return Bgraf32::from_rgb_f32(r, g, b);
                             }
-                        },
+                        }
                         Material(material) => {
-                            if material.emission >= 1.  {
+                            if material.emission >= 1. {
                                 // Do not bounce if fully emissive
-                                if bounces > 0  {
+                                if bounces > 0 {
                                     return material.color.mul_scalar(material.emission);
                                 } else {
                                     // To avoid color clipping, don't multiply direct rays by more than 1
@@ -253,7 +275,7 @@ impl RaytracerSimd {
                                 }
                             } else {
                                 let mut n = closest_inter.n;
-                                if n.dot(ray_dir) > 0.  {
+                                if n.dot(ray_dir) > 0. {
                                     // If normal is facing the wrong direction, flip it
                                     n = n.mul_scalar(-1.);
                                 }
@@ -273,26 +295,29 @@ impl RaytracerSimd {
 
                                 // **Lambertian diffuse bounce**
                                 // get a random point on the unit sphere around the hit location
-                                let point_on_sphere = closest_inter.p.add(random_unit_vector(&mut self.main_prng));
+                                let point_on_sphere =
+                                    closest_inter.p.add(random_unit_vector(&mut self.main_prng));
                                 // shift that point 1 unit away from the hit point along the normal vector
                                 let point_on_sphere_shifted = point_on_sphere.add(n);
-                                let lambertian_ray_dir = point_on_sphere_shifted.sub(closest_inter.p).normalize();
+                                let lambertian_ray_dir =
+                                    point_on_sphere_shifted.sub(closest_inter.p).normalize();
                                 // lambertian_ray_dir now should have a lambertian distribution
 
                                 // assert(bounce_dir.dot(n) > 0);
-                                return material.color
-                                    .mul_elementwise(self.zaytrace_ray(maybe_closest_inter_geo_id, closest_inter.p, lambertian_ray_dir, bounces + 1));
-                                    // .mul_scalar(lambertian_scalar);
+                                return material.color.mul_elementwise(self.zaytrace_ray(
+                                    maybe_closest_inter_geo_id,
+                                    closest_inter.p,
+                                    lambertian_ray_dir,
+                                    bounces + 1,
+                                ));
+                                // .mul_scalar(lambertian_scalar);
                             }
-                        },
+                        }
                     }
-                },
+                }
             }
         }
 
-        return Bgra::from_rgb_f32(0., 0., 0.);
+        return Bgraf32::from_rgb_f32(0., 0., 0.);
     }
 }
-
-pub const MAX_ACCUMULATE_STEPS: u32 = 128;
-pub const DITHER_DIVISOR: usize = 256;

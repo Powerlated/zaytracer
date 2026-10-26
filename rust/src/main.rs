@@ -11,7 +11,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
-use crate::raytracer::{HEIGHT, WIDTH, scalar::*};
+use crate::raytracer::{HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
 use crate::raytracer::simd::*;
 
 mod raytracer;
