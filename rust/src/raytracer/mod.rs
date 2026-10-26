@@ -478,7 +478,7 @@ impl Raytracer {
             accumulate_steps: 0,
         };
 
-        let mut light = square(1., TriShader::Material(MaterialShader::new_emissive(1., 1., 1., 4.)));
+        let mut light = square(1., TriShader::Material(MaterialShader::new_emissive(1., 1., 1., 7.)));
         transform_in_place(&mut light, Mat33::rotation(90., 0., 0.).translate(0., 0.999, 1.));
         raytracer.add_geos(&light);
 
@@ -542,7 +542,8 @@ impl Raytracer {
                 let uniform_rect_dist =
                     ((int as f32) / (0xFFFFFFFFu32 as f32) - 0.5) * (1. / (DITHER_DIVISOR as f32));
 
-                let dithered = self.accumulator_buf[row * WINDOW_WIDTH + col].add(Rgbf32 {val: [
+                let scaled = self.accumulator_buf[row * WINDOW_WIDTH + col].div_scalar(self.accumulate_steps as f32);
+                let dithered = scaled.add(Rgbf32 {val: [
                     uniform_rect_dist,
                     uniform_rect_dist,
                     uniform_rect_dist,
@@ -571,18 +572,16 @@ impl Raytracer {
                     let norm_x = map_range(col_jittered, 0., WINDOW_WIDTH as f32, -1., 1.);
 
                     // perform antialiasing accumulate
-                    // https://en.wikipedia.org/wiki/Moving_average#Cumulative_average
                     let new_px = self.zaytrace_image_inner(norm_x, norm_y);
                     let acc_px = &mut self.accumulator_buf[row * WINDOW_WIDTH + col];
-                    *acc_px = new_px.add(acc_px.mul_scalar(self.accumulate_steps as f32))
-                        .div((self.accumulate_steps + 1) as f32);
+                    *acc_px = (*acc_px).add(new_px);
                 }
             }
 
             // **Then, update the output buffer while dithering it.**
+            self.accumulate_steps += 1;
             self.update_and_dither_output_buffer(buf);
 
-            self.accumulate_steps += 1;
         }
 
         return self.accumulate_steps;
