@@ -97,21 +97,21 @@ impl Vec3 {
 
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 #[repr(C)]
-pub struct Rgbaf32 {
+pub struct Bgra {
     pub val: [f32; 4]
 }
 
-impl Rgbaf32 {
-    pub fn from_rgb_f32(r: f32, g: f32, b: f32) -> Rgbaf32 {
-        return Rgbaf32 { val: [r, g, b, 1.0] };
+impl Bgra {
+    pub fn from_rgb_f32(r: f32, g: f32, b: f32) -> Bgra {
+        return Bgra { val: [b, g, r, 1.0] };
     }
 
-    pub fn zero() -> Rgbaf32 {
-        return Rgbaf32 { val: [0.0, 0.0, 0.0, 0.0] };
+    pub fn zero() -> Bgra {
+        return Bgra { val: [0.0, 0.0, 0.0, 0.0] };
     }
 
-    pub fn add(self: Rgbaf32, b: Rgbaf32) -> Rgbaf32 {
-        return Rgbaf32 { val: [
+    pub fn add(self: Bgra, b: Bgra) -> Bgra {
+        return Bgra { val: [
             self.val[0] + b.val[0],
             self.val[1] + b.val[1],
             self.val[2] + b.val[2],
@@ -119,8 +119,8 @@ impl Rgbaf32 {
         ]};
     }
 
-    pub fn sub(self: Rgbaf32, b: Rgbaf32) -> Rgbaf32 {
-        return Rgbaf32 { val: [
+    pub fn sub(self: Bgra, b: Bgra) -> Bgra {
+        return Bgra { val: [
             self.val[0] - b.val[0],
             self.val[1] - b.val[1],
             self.val[2] - b.val[2],
@@ -128,8 +128,8 @@ impl Rgbaf32 {
         ]};
     }
 
-    pub fn mul_scalar(self: Rgbaf32, b: f32) -> Rgbaf32 {
-        return Rgbaf32 { val: [
+    pub fn mul_scalar(self: Bgra, b: f32) -> Bgra {
+        return Bgra { val: [
             self.val[0] * b,
             self.val[1] * b,
             self.val[2] * b,
@@ -137,8 +137,8 @@ impl Rgbaf32 {
         ]};
     }
 
-    pub fn mul_elementwise(self: Rgbaf32, b: Rgbaf32) -> Rgbaf32 {
-        return Rgbaf32 { val: [
+    pub fn mul_elementwise(self: Bgra, b: Bgra) -> Bgra {
+        return Bgra { val: [
             self.val[0] * b.val[0],
             self.val[1] * b.val[1],
             self.val[2] * b.val[2],
@@ -146,8 +146,8 @@ impl Rgbaf32 {
         ]};
     }
 
-    pub fn div(self: Rgbaf32, b: f32) -> Rgbaf32 {
-        return Rgbaf32 { val: [
+    pub fn div(self: Bgra, b: f32) -> Bgra {
+        return Bgra { val: [
             self.val[0] / b,
             self.val[1] / b,
             self.val[2] / b,
@@ -155,8 +155,8 @@ impl Rgbaf32 {
         ]};
     }
     
-    pub fn div_scalar(self: Rgbaf32, b: f32) -> Rgbaf32 {
-        return Rgbaf32 { val: [
+    pub fn div_scalar(self: Bgra, b: f32) -> Bgra {
+        return Bgra { val: [
             self.val[0] / b,
             self.val[1] / b,
             self.val[2] / b,
@@ -168,12 +168,49 @@ impl Rgbaf32 {
         return (f32::clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5) as u32;
     }
 
-    pub fn to_argb8888(self: &Rgbaf32) -> u32 {
+    pub fn to_argb8888(self: &Bgra) -> u32 {
         return (Self::color_f32_to_255(self.val[3]) << 24) |
-            (Self::color_f32_to_255(self.val[0]) << 16) |
+            (Self::color_f32_to_255(self.val[2]) << 16) |
             (Self::color_f32_to_255(self.val[1]) << 8) |
-            (Self::color_f32_to_255(self.val[2]));
+            (Self::color_f32_to_255(self.val[0]));
     }
+}
+
+/// h: [0, 360)
+/// s: [0, 1]
+/// v: [0, 1]
+pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Bgra {
+    assert!(h >= 0. && h < 360.);
+    assert!(s >= 0. && s <= 1.);
+    assert!(v >= 0. && v <= 1.);
+
+    // calculate chroma
+    let c = v * s;
+
+    // calculate secondary color component
+    let x = c * (1. - f32::abs((h / 60.) % 2.) - 1.);
+
+    // calculate match value
+    let m = v - c;
+
+    // r', g', b'
+    let p: Bgra;
+
+    if h < 60.  {
+        p = Bgra::from_rgb_f32(c, x, 0.);
+    } else if h < 120.  {
+        p = Bgra::from_rgb_f32(x, c, 0.);
+    } else if h < 180.  {
+        p = Bgra::from_rgb_f32(0., c, x);
+    } else if h < 240.  {
+        p = Bgra::from_rgb_f32(0., x, c);
+    } else if h < 300.  {
+        p = Bgra::from_rgb_f32(x, 0., c);
+    } else {
+        p = Bgra::from_rgb_f32(c, 0., x);
+    }
+
+    return p.add(Bgra::from_rgb_f32(m, m, m));
 }
 
 #[derive(Clone, Copy)]
@@ -311,7 +348,7 @@ pub struct Mat44 {
 
 #[cfg(test)]
 mod tests {
-    use crate::raytracer::math::{Mat33, Vec3};
+    use crate::raytracer::scalar::math::{Mat33, Vec3};
 
     #[test]
     fn identity_is_identity() {
@@ -323,4 +360,9 @@ mod tests {
 
 pub const fn deg_to_rad(deg: f32) -> f32 {
     return deg * std::f32::consts::PI / 180.;
+}
+
+/// Linearly maps a value from a source range to a target range
+pub fn map_range(s: f32, a1: f32, a2: f32, b1: f32, b2: f32) -> f32 {
+    return b1 + (s - a1) * (b2 - b1) / (a2 - a1);
 }

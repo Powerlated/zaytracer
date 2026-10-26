@@ -8,12 +8,11 @@ use wgpu::Extent3d;
 use wgpu::TextureFormat::Bgra8UnormSrgb;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use crate::raytracer::MAX_ACCUMULATE_STEPS;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
-use crate::raytracer::Raytracer;
+use crate::raytracer::scalar::{MAX_ACCUMULATE_STEPS, Raytracer};
 
 mod raytracer;
 
@@ -34,13 +33,13 @@ struct WgpuState {
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
 
-    raytracer: raytracer::Raytracer,
+    raytracer: raytracer::scalar::Raytracer,
 
     raytrace_start_time: Option<std::time::Instant>,
     raytrace_finish_time: Option<std::time::Instant>,
 }
 
-pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 
 impl WgpuState {
     async fn init_wgpu(display: OwnedDisplayHandle, arc_window: Arc<Window>) -> WgpuState {
