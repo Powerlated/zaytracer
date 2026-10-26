@@ -1,5 +1,7 @@
 $uProfPath = "C:\Program Files\AMD\AMDuProf\bin\AMDuProfCLI.exe"
 
+if (Test-Path uprof_out) { Remove-Item -Path uprof_out -Recurse }
+
 cargo build --workspace --release
 if ($LASTEXITCODE -ne 0) { 
     throw "External command failed with exit code $LASTEXITCODE" 

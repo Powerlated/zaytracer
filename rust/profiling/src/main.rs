@@ -9,12 +9,22 @@ use raytracer::raytracer::Raytracer;
 fn main() {
     let mut buffer_orig = vec![0u8; WINDOW_WIDTH * 4 * WINDOW_HEIGHT].into_boxed_slice();
 
+    // Set this thread to high priority
+    thread_priority::set_winapi_thread_priority(
+        thread_priority::thread_native_id(), 
+        thread_priority::WinAPIThreadPriority::Highest
+    ).unwrap();
+
     // Cast buffer into properly typed 2D array
     let u32_slice: &mut [u32] = bytemuck::cast_slice_mut(&mut buffer_orig);
     let flat_array_ref: &mut [u32; WINDOW_WIDTH * WINDOW_HEIGHT] = u32_slice.try_into().unwrap();
     let buffer: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT] = bytemuck::cast_mut(flat_array_ref);
 
     let mut raytracer = Raytracer::new();
+    // Warm up the cache
+    for _ in 0..16 {
+        raytracer.raytrace_step(std::hint::black_box(buffer));
+    }
     unsafe { amdProfileResumeImpl(); }
     raytracer.raytrace_step(std::hint::black_box(buffer));
     unsafe { amdProfilePauseImpl(); }
