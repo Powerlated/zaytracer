@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use std::borrow::Cow;
+use wgpu::Extent3d;
+use wgpu::TextureFormat::Bgra8UnormSrgb;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use crate::raytracer::MAX_ACCUMULATE_STEPS;
@@ -26,10 +28,13 @@ struct WgpuState {
     render_pipeline: wgpu::RenderPipeline,
 
     texture_data: Box<[u8]>,
+    texture: wgpu::Texture,
+    texture_bind_group: wgpu::BindGroup,
 
     raytracer: raytracer::Raytracer,
-    // texture_bind_group: wgpu::BindGroup,
 }
+
+pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 
 pub const WINDOW_WIDTH: usize = 640;
 pub const WINDOW_HEIGHT: usize = 480;
@@ -51,7 +56,7 @@ impl WgpuState {
         // **Load shaders from disk**
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("triangle.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("texture.wgsl"))),
         });
 
         let surface = instance.create_surface(arc_window.clone()).unwrap();
@@ -59,14 +64,15 @@ impl WgpuState {
         let swapchain_capabilities = surface.get_capabilities(&adapter);
         let swapchain_format = swapchain_capabilities.formats[0];
 
-        /*
         // Get preferred render format 
         let cap = surface.get_capabilities(&adapter);
         let surface_format = cap.formats[0];
-        */
+        // let surface_format = wgpu::TextureFormat::Bgra8UnormSrgb;
+
+        let inner_size = arc_window.inner_size();
+        println!("Creating surface with dimensions {}x{}", inner_size.width, inner_size.height);
         
         let size = arc_window.inner_size();
-        let surface_format = wgpu::TextureFormat::Bgra8Unorm;
         // Configure surface for the first time. WebGPU always draws to a texture,
         // just a special one for the main screen
         surface.configure(&device, &wgpu::SurfaceConfiguration {
@@ -76,13 +82,12 @@ impl WgpuState {
             // Request compatibility with the sRGB-format texture that will be created later
             view_formats: vec![surface_format.add_srgb_suffix()],
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            width: WINDOW_WIDTH as u32,
-            height: WINDOW_HEIGHT as u32,
+            width: inner_size.width,
+            height: inner_size.height,
             desired_maximum_frame_latency: 2,
             present_mode: wgpu::PresentMode::AutoNoVsync,
         });
 
-        /*
         // *Texture setup for drawing raytraced image to screen*
         let texture = device.create_texture(&wgpu::wgt::TextureDescriptor { 
             label: None, 
@@ -94,7 +99,7 @@ impl WgpuState {
             mip_level_count: 1,
             sample_count: 1, 
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: TEXTURE_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             // Specifies what texture formats can be used to create TextureViews for this texture,
             view_formats: &[]
@@ -105,7 +110,7 @@ impl WgpuState {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
@@ -153,17 +158,16 @@ impl WgpuState {
             }
         );
 
-        */
         // Must add bind group layouts to pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[], //Some(&texture_bind_group_layout)
+            bind_group_layouts: &[Some(&texture_bind_group_layout)],
             immediate_size: 0
         });
 
         // And then pipeline layout is used to create the render pipeline
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
+            label: Some("Render texture from ray tracer"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -195,7 +199,8 @@ impl WgpuState {
             render_pipeline,
 
             texture_data: vec![0u8; WINDOW_WIDTH * 4 * WINDOW_HEIGHT].into_boxed_slice(),
-            // texture_bind_group,
+            texture,
+            texture_bind_group,
 
             raytracer: Raytracer::new(),
         }
@@ -204,10 +209,10 @@ impl WgpuState {
     fn render(&mut self) {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) => texture,
-            _ => { panic!(); }
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            other => { unimplemented!() }
         };
 
-        /*
         let texture_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor {
@@ -217,7 +222,7 @@ impl WgpuState {
                 ..Default::default()
             });
 
-        // Render a solid green screen
+        // Render a solid black screen
         let mut encoder = self.device.create_command_encoder(&Default::default());
         // Create the render pass object that will clear the screen.
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -237,17 +242,13 @@ impl WgpuState {
             multiview_mask: None,
         });
         render_pass.set_pipeline(&self.render_pipeline);
-        // render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
         render_pass.draw(0..6, 0..1);
 
         // Call draw commands here
 
         // End the render pass construction. 
         drop(render_pass);
-
-        // Submit the encoded render pass to the GPU for rendering
-        self.queue.submit([encoder.finish()]);
-        */
 
         // Cast self.texture_data into properly typed 2D array
         let u32_slice: &mut [u32] = bytemuck::cast_slice_mut(&mut self.texture_data);
@@ -257,19 +258,20 @@ impl WgpuState {
         let accumulated_samples = self.raytracer.raytrace_image(buffer);
         self.arc_window.set_title(format!("Brian Jia - Raytracer [{}/{}]", accumulated_samples, MAX_ACCUMULATE_STEPS).as_str());
 
-
         self.queue.write_texture(
-            surface_texture.texture.as_image_copy(),
+            self.texture.as_image_copy(),
             &self.texture_data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(surface_texture.texture.width() * 4),
-                rows_per_image: Some(surface_texture.texture.height()),
+                bytes_per_row: Some(TEXTURE_FORMAT.theoretical_memory_footprint(Extent3d { width: WINDOW_WIDTH as u32, height: 1, depth_or_array_layers: 1 }) as u32),
+                rows_per_image: Some(WINDOW_HEIGHT as u32),
             },
-            surface_texture.texture.size(),
+            self.texture.size(),
         );
-
     
+        // Submit the encoded render pass to the GPU for rendering
+        self.queue.submit([encoder.finish()]);
+
         self.arc_window.pre_present_notify();
         self.queue.present(surface_texture);
     }
@@ -286,7 +288,13 @@ impl ApplicationHandler for App {
 
         arc_window.set_resizable(false);
         arc_window.set_enabled_buttons(arc_window.enabled_buttons().difference(WindowButtons::MAXIMIZE));
-        let l_size = LogicalSize::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32);
+        let hidpi = arc_window.scale_factor() >= 1.5;
+
+        let l_size = if hidpi {
+            winit::dpi::PhysicalSize::new((WINDOW_WIDTH * 2) as u32, (WINDOW_HEIGHT * 2) as u32)
+        } else {
+            winit::dpi::PhysicalSize::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32)
+        };
         arc_window.set_max_inner_size(Some(l_size));
         arc_window.set_min_inner_size(Some(l_size));
         let _ = arc_window.request_inner_size(l_size);
@@ -316,6 +324,16 @@ impl ApplicationHandler for App {
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
+
+    // Move this thread onto the highest-numbered logical core
+    let core_ids = core_affinity::get_core_ids().unwrap();
+    core_affinity::set_for_current(*core_ids.last().unwrap());
+    
+    // Set this thread to high priority
+    thread_priority::set_winapi_thread_priority(
+        thread_priority::thread_native_id(), 
+        thread_priority::WinAPIThreadPriority::Highest
+    ).unwrap();
 
     // ControlFlow::Poll continuously runs the event loop, even if the OS hasn't
     // dispatched any events. This is ideal for games and similar applications.

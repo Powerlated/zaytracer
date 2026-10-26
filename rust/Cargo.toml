@@ -5,7 +5,10 @@ edition = "2024"
 
 [dependencies]
 bytemuck = "1.25.2"
+core_affinity = "0.8.3"
 pollster = "1.0.1"
 rand = "0.10.3"
+soa_derive = "0.14.0"
+thread-priority = "3.1.1"
 wgpu = "30.0.1"
 winit = "0.30.13"
