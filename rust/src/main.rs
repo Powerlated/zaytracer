@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 use std::sync::Arc;
 
 use std::borrow::Cow;
@@ -38,7 +40,7 @@ struct WgpuState {
     raytrace_finish_time: Option<std::time::Instant>,
 }
 
-pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 impl WgpuState {
     async fn init_wgpu(display: OwnedDisplayHandle, arc_window: Arc<Window>) -> WgpuState {

@@ -467,6 +467,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fearless_simd"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "629c9d6b6f30b5604089e0980f4d924a013aacb1654a6cdf5d3d852224f68651"
+
+[[package]]
+name = "fearless_simd_macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e91d94c6885390b81782d7ee60fd6583b33907333a8b340de25ccf468353315"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1519,11 +1536,14 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "core_affinity",
+ "fearless_simd",
+ "fearless_simd_macros",
  "pollster",
  "rand",
  "soa_derive",
  "thread-priority",
  "wgpu",
+ "wide",
  "winit",
 ]
 
@@ -1641,6 +1661,15 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "safe_arch"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42c6efa15875e6ecb39ca61fb0b0c1a40b84fac5a5ffe71eef7d1000c8eb3f5f"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "same-file"
@@ -2402,6 +2431,16 @@ dependencies = [
  "raw-window-handle",
  "static_assertions",
  "web-sys",
+]
+
+[[package]]
+name = "wide"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d920ac99c3c8edce110cb8d07dbb324d6d026011dce85b1e9355b70f0adacc4f"
+dependencies = [
+ "bytemuck",
+ "safe_arch",
 ]
 
 [[package]]

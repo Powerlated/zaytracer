@@ -1,27 +1,30 @@
 use std::f32::consts::PI;
 use std::ops::Div;
-
-use rand::rngs::{Xoshiro128PlusPlus};
-use rand::{Rng, SeedableRng};
+use std::simd::num::{SimdFloat, SimdUint};
+use std::simd::{f32x16, u8x16, u32x16, u64x16};
 
 mod math;
+mod rng;
+mod rng_portable_simd;
+use crate::raytracer::rng::{Xoshiro128PlusPlus, Xoshiro128PlusPlusSliceMut, Xoshiro128PlusPlusVec};
+use crate::raytracer::rng_portable_simd::Xoshiro128PlusPlusSimd;
 use crate::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::raytracer::TriShader::{Material, PerVertex};
-use crate::raytracer::math::{Mat33, Mat44, Rgbf32, Vec3, deg_to_rad};
+use crate::raytracer::math::{Mat33, Mat44, Rgbaf32, Vec3, deg_to_rad};
 
 #[derive(Clone)]
 struct MaterialShader {
-    color: Rgbf32,
+    color: Rgbaf32,
     emission: f32,
 }
 
 impl MaterialShader {
     fn new_diffuse(r: f32, g: f32, b: f32) -> MaterialShader {
-        return Self { color: Rgbf32 { val: [r, g, b] }, emission: 0.0 };
+        return Self { color: Rgbaf32 { val: [r, g, b, 1.0] }, emission: 0.0 };
     }
 
     fn new_emissive(r: f32, g: f32, b: f32, emission: f32) -> MaterialShader {
-        return Self { color: Rgbf32 { val: [r, g, b] }, emission: emission };
+        return Self { color: Rgbaf32 { val: [r, g, b, 1.0] }, emission: emission };
     }
 }
 
@@ -288,7 +291,7 @@ fn map_range(s: f32, a1: f32, a2: f32, b1: f32, b2: f32) -> f32 {
 /// h: [0, 360)
 /// s: [0, 1]
 /// v: [0, 1]
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgbf32 {
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgbaf32 {
     assert!(h >= 0. && h < 360.);
     assert!(s >= 0. && s <= 1.);
     assert!(v >= 0. && v <= 1.);
@@ -303,23 +306,23 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgbf32 {
     let m = v - c;
 
     // r', g', b'
-    let p: Vec3;
+    let p: Rgbaf32;
 
     if h < 60.  {
-        p = Vec3::from_xyz(c, x, 0.);
+        p = Rgbaf32::from_rgb_f32(c, x, 0.);
     } else if h < 120.  {
-        p = Vec3::from_xyz(x, c, 0.);
+        p = Rgbaf32::from_rgb_f32(x, c, 0.);
     } else if h < 180.  {
-        p = Vec3::from_xyz(0., c, x);
+        p = Rgbaf32::from_rgb_f32(0., c, x);
     } else if h < 240.  {
-        p = Vec3::from_xyz(0., x, c);
+        p = Rgbaf32::from_rgb_f32(0., x, c);
     } else if h < 300.  {
-        p = Vec3::from_xyz(x, 0., c);
+        p = Rgbaf32::from_rgb_f32(x, 0., c);
     } else {
-        p = Vec3::from_xyz(c, 0., x);
+        p = Rgbaf32::from_rgb_f32(c, 0., x);
     }
 
-    return p.add(Vec3::from_xyz(m, m, m));
+    return p.add(Rgbaf32::from_rgb_f32(m, m, m));
 }
 
 type GeoId = usize;
@@ -405,12 +408,8 @@ fn cube(len: f32) -> [Geo; 12] {
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
 fn random_jitter(prng: &mut Xoshiro128PlusPlus) -> (f32, f32) {
-    // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-    let next = prng.next_u64();
-
-    // split it in half to get two 32-bit vars where each bit is I.I.D.
-    let x_jitter_int = next & 0xFFFFFFFF;
-    let y_jitter_int = (next >> 32) & 0xFFFFFFFF;
+    let x_jitter_int = prng.next_u32() & 0xFFFFFFFF;
+    let y_jitter_int = prng.next_u32() & 0xFFFFFFFF;
 
     return (
         (x_jitter_int as f32) / (0xFFFFFFFFu32 as f32) - 0.5,
@@ -421,8 +420,8 @@ fn random_jitter(prng: &mut Xoshiro128PlusPlus) -> (f32, f32) {
 // 3D vector that is evenly distributed on the unit sphere
 fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
     loop {
-        // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-        let next = prng.next_u64();
+        // get 64 bits of randomness
+        let next = ((prng.next_u32() as u64) << 32) | (prng.next_u32() as u64);
 
         // split it in three to get three 21-bit vars where each bit is I.I.D.
         let xyz_int: [u64; 3] = [next & 0x1FFFFF,
@@ -448,21 +447,15 @@ fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
 
 // return is random value in [0, 1]
 fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
-    // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-    let next = prng.next_u64();
-
-    // split it in half to get two 32-bit vars where each bit is I.I.D.
-    let int = next & 0xFFFFFFFF;
-
+    let int = prng.next_u32() & 0xFFFFFFFF;
     return (int as f32) / (0xFFFFFFFFu32 as f32);
 }
 
 pub struct Raytracer {
-    main_prng: rand::rngs::Xoshiro128PlusPlus,
-    dither_prng: rand::rngs::Xoshiro128PlusPlus,
+    main_prng: Xoshiro128PlusPlus,
     geos: Vec<Geo>,
     handle_to_geo_ids: Vec<Vec<GeoId>>,
-    accumulator_buf: Box<[Rgbf32]>,
+    accumulator_buf: Box<[Rgbaf32]>,
     accumulate_steps: u32,
 }
 
@@ -470,11 +463,10 @@ impl Raytracer {
     pub fn new() -> Self {
         let mut raytracer = Self {
             // start the PRNGs from 0 seed always
-            main_prng: rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0),
-            dither_prng: rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0),
+            main_prng: Xoshiro128PlusPlus::seed_from_u64(0),
             geos: Vec::new(),
             handle_to_geo_ids: Vec::new(),
-            accumulator_buf: vec![Rgbf32::zero(); WINDOW_HEIGHT * WINDOW_WIDTH as usize].into_boxed_slice(),
+            accumulator_buf: vec![Rgbaf32::zero(); WINDOW_HEIGHT * WINDOW_WIDTH as usize].into_boxed_slice(),
             accumulate_steps: 0,
         };
 
@@ -529,29 +521,27 @@ impl Raytracer {
         return GeosHandle { val: handle_to_return };
     }
 
+    #[inline(never)]
     fn update_and_dither_output_buffer(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
-        self.dither_prng = rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0);
+        let mut dither_prng = Xoshiro128PlusPlusSimd::seed_from_u64(
+            u64x16::from_array(core::array::from_fn(|i| i as u64))
+        );
+        
+        let accumulator_buf_plain: &[f32] = bytemuck::cast_slice(&self.accumulator_buf);
+        assert!(accumulator_buf_plain.len() % 16 == 0);
 
-        for (row, row_pixels) in buf.iter_mut().enumerate() {
-            for (col, px) in row_pixels.iter_mut().enumerate() {
-                // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-                let next = self.dither_prng.next_u64();
+        let output_buf_plain: &mut [u8] = bytemuck::cast_slice_mut(buf);
+        for (chunk_in, chunk_out) in accumulator_buf_plain.chunks_exact(16).zip(output_buf_plain.chunks_exact_mut(16)) {
+            let int = dither_prng.next_u32() & u32x16::splat(0xFFFFFFFF);
+            let uniform_rect_dist = (int.cast::<f32>() / f32x16::splat(0xFFFFFFFFu32 as f32) - f32x16::splat(0.5)) / f32x16::splat(DITHER_DIVISOR as f32);
 
-                // get bottom half to get a 32-bit var where each bit is I.I.D.
-                let int = next & 0xFFFFFFFF;
-                let uniform_rect_dist =
-                    ((int as f32) / (0xFFFFFFFFu32 as f32) - 0.5) * (1. / (DITHER_DIVISOR as f32));
+            let dithered = f32x16::from_slice(chunk_in) + uniform_rect_dist;
+            let scaled = dithered / f32x16::splat(self.accumulate_steps as f32);
 
-                let scaled = self.accumulator_buf[row * WINDOW_WIDTH + col].div_scalar(self.accumulate_steps as f32);
-                let dithered = scaled.add(Rgbf32 {val: [
-                    uniform_rect_dist,
-                    uniform_rect_dist,
-                    uniform_rect_dist,
-                ]});
-
-                *px = dithered.to_argb8888(1.);
-            }
+            let u8ed = (scaled.simd_clamp(f32x16::splat(0.0), f32x16::splat(1.0)) * f32x16::splat(255.0) + f32x16::splat(0.5)).cast::<u8>();
+            u8ed.copy_to_slice(chunk_out);
         }
+
     }
 
     pub fn raytrace_step(&mut self, buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) -> u32 {
@@ -590,7 +580,7 @@ impl Raytracer {
     // `norm_x` and `norm_y` are Vulkan-style normalized
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
-    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Rgbf32 {
+    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Rgbaf32 {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
 
@@ -614,8 +604,8 @@ impl Raytracer {
 
     // **Inner raytracing loop** :D
     const MAX_BOUNCES: u8 = 16;
-    fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Rgbf32 {
-        if bounces > Self::MAX_BOUNCES  { return Rgbf32::from_rgb_f32(0., 0., 0.); }
+    fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Rgbaf32 {
+        if bounces > Self::MAX_BOUNCES  { return Rgbaf32::from_rgb_f32(0., 0., 0.); }
 
         let mut closest_inter_t: f32 = 1000.0;
         let mut maybe_closest_inter: Option<Intersection> = None;
@@ -676,9 +666,9 @@ impl Raytracer {
 
                             // make it much brighter if it's indirect bounce
                             if bounces > 0  {
-                                return Rgbf32::from_rgb_f32(r, g, b).mul_scalar(10.);
+                                return Rgbaf32::from_rgb_f32(r, g, b).mul_scalar(10.);
                             } else {
-                                return Rgbf32::from_rgb_f32(r, g, b);
+                                return Rgbaf32::from_rgb_f32(r, g, b);
                             }
                         },
                         Material(material) => {
@@ -729,7 +719,7 @@ impl Raytracer {
             }
         }
 
-        return Rgbf32::from_rgb_f32(0., 0., 0.);
+        return Rgbaf32::from_rgb_f32(0., 0., 0.);
     }
 
     fn consolidate_handles(&mut self, handles: &[GeosHandle]) -> GeosHandle {
@@ -765,7 +755,7 @@ pub fn rainbow(buf: &mut [[u32; WINDOW_WIDTH]; WINDOW_HEIGHT]) {
             _ = x;
 
             let hue_deg = map_range(y, -1., 1., 0., 360.);
-            *px = hsv_to_rgb(hue_deg, 1., 1.).to_argb8888(1.0);
+            *px = hsv_to_rgb(hue_deg, 1., 1.).to_argb8888();
         }
     }
 }

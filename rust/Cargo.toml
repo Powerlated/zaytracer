@@ -13,11 +13,14 @@ default-run = "raytracer"
 [dependencies]
 bytemuck = "1.25.2"
 core_affinity = "0.8.3"
+fearless_simd = "1.2.0"
+fearless_simd_macros = "0.1.0"
 pollster = "1.0.1"
 rand = "0.10.3"
 soa_derive = "0.14.0"
 thread-priority = "3.1.1"
 wgpu = "30.0.1"
+wide = "1.7.1"
 winit = "0.30.13"
 
 [profile.release]

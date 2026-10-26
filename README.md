@@ -1,5 +1,7 @@
 It's a ray tracer that I'm making for fun!
 
+Working on optimizing for AVX512 right now, using Rust portable SIMD!
+
 # Timings
 
 Profiling setup (Windows):

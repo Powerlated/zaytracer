@@ -1,4 +1,7 @@
-#[derive(Clone, Copy, Default)]
+use bytemuck::{Pod, Zeroable};
+
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
+#[repr(C)]
 pub struct Vec3 {
     pub val: [f32; 3]
 }
@@ -10,10 +13,6 @@ impl Vec3 {
 
     pub fn from_xyz(x: f32, y: f32, z: f32) -> Vec3 {
         return Vec3 { val: [x, y, z] };
-    }
-
-    pub fn from_rgb_f32(r: f32, g: f32, b: f32) -> Vec3 {
-        return Self::from_xyz(r, g, b);
     }
 
     pub fn add(self: Vec3, b: Vec3) -> Vec3 {
@@ -94,13 +93,83 @@ impl Vec3 {
     pub fn normalize(self: Vec3) -> Vec3 {
         return self.div(self.magn());
     }
+}
+
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
+#[repr(C)]
+pub struct Rgbaf32 {
+    pub val: [f32; 4]
+}
+
+impl Rgbaf32 {
+    pub fn from_rgb_f32(r: f32, g: f32, b: f32) -> Rgbaf32 {
+        return Rgbaf32 { val: [r, g, b, 1.0] };
+    }
+
+    pub fn zero() -> Rgbaf32 {
+        return Rgbaf32 { val: [0.0, 0.0, 0.0, 0.0] };
+    }
+
+    pub fn add(self: Rgbaf32, b: Rgbaf32) -> Rgbaf32 {
+        return Rgbaf32 { val: [
+            self.val[0] + b.val[0],
+            self.val[1] + b.val[1],
+            self.val[2] + b.val[2],
+            self.val[3] + b.val[3],
+        ]};
+    }
+
+    pub fn sub(self: Rgbaf32, b: Rgbaf32) -> Rgbaf32 {
+        return Rgbaf32 { val: [
+            self.val[0] - b.val[0],
+            self.val[1] - b.val[1],
+            self.val[2] - b.val[2],
+            self.val[3] - b.val[3],
+        ]};
+    }
+
+    pub fn mul_scalar(self: Rgbaf32, b: f32) -> Rgbaf32 {
+        return Rgbaf32 { val: [
+            self.val[0] * b,
+            self.val[1] * b,
+            self.val[2] * b,
+            self.val[3] * b,
+        ]};
+    }
+
+    pub fn mul_elementwise(self: Rgbaf32, b: Rgbaf32) -> Rgbaf32 {
+        return Rgbaf32 { val: [
+            self.val[0] * b.val[0],
+            self.val[1] * b.val[1],
+            self.val[2] * b.val[2],
+            self.val[3] * b.val[3],
+        ]};
+    }
+
+    pub fn div(self: Rgbaf32, b: f32) -> Rgbaf32 {
+        return Rgbaf32 { val: [
+            self.val[0] / b,
+            self.val[1] / b,
+            self.val[2] / b,
+            self.val[3] / b,
+        ]};
+    }
+    
+    pub fn div_scalar(self: Rgbaf32, b: f32) -> Rgbaf32 {
+        return Rgbaf32 { val: [
+            self.val[0] / b,
+            self.val[1] / b,
+            self.val[2] / b,
+            self.val[3] / b,
+        ]};
+    }
 
     pub fn color_f32_to_255(color_f32: f32) -> u32 {
         return (f32::clamp(color_f32, 0.0, 1.0) * 255.0 + 0.5) as u32;
     }
 
-    pub fn to_argb8888(self: &Rgbf32, a: f32) -> u32 {
-        return (Self::color_f32_to_255(a) << 24) |
+    pub fn to_argb8888(self: &Rgbaf32) -> u32 {
+        return (Self::color_f32_to_255(self.val[3]) << 24) |
             (Self::color_f32_to_255(self.val[0]) << 16) |
             (Self::color_f32_to_255(self.val[1]) << 8) |
             (Self::color_f32_to_255(self.val[2]));
@@ -251,8 +320,6 @@ mod tests {
         assert_eq!(vec.val, transformed.val);
     }
 }
-
-pub type Rgbf32 = Vec3;
 
 pub const fn deg_to_rad(deg: f32) -> f32 {
     return deg * std::f32::consts::PI / 180.;

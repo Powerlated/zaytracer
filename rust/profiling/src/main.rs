@@ -1,7 +1,11 @@
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+
 use std::thread;
 use std::time::Duration;
 
-use profiling::{amdProfilePauseImpl, amdProfileResumeImpl};
+include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 use raytracer::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use raytracer::raytracer::Raytracer;
