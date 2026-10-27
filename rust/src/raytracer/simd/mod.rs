@@ -252,16 +252,18 @@ impl RaytracerSimd {
         let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into())
             .normalize();
 
-        return self.zaytrace_ray(ray_pos, ray_dir, 0);
+        return self.zaytrace_ray(ray_pos, ray_dir, 0, 0xFFFF);
     }
 
     // **Inner raytracing loop** :D
+    // Traces 16 rays in parallel
     const MAX_BOUNCES: u8 = 16;
     fn zaytrace_ray(
         &mut self,
         ray_pos: Vec3f32,
         ray_dir: Vec3<F32x16>,
         bounces: u8,
+        activemask: u16 // rays that are still 'alive' i.e. still bouncing around
     ) -> Bgra<F32x16> {
         // TODO: Bounce limit
         // if bounces > Self::MAX_BOUNCES {
@@ -270,22 +272,15 @@ impl RaytracerSimd {
 
         unsafe {
             let mut closest_inter_t = F32x16::splat(1000.0);
-            let mut hitmask: u16 = 0;
+            let mut hitmask: u16 = 0; // rays, that in this current bounce, have hit a triangle
             let mut hit_ids = U32x16::splat(0);
 
             for (tri_id, tri) in self.geos.iter().enumerate() {
-                // TODO: Prevent rays from hitting their origin triangle.
-                // if let Some(origin_geo_id) = maybe_origin_geo_id
-                //     && origin_geo_id == geo_id
-                // {
-                //     continue;
-                // };
-
                 let inter = tri.intersect(ray_pos, ray_dir);
                 let mut writemask = inter.hitmask & inter.t.cmp_lt(closest_inter_t);
 
-                // Prevent rays from hitting their origin triangle
-                writemask &= !hit_ids.cmp_eq(tri_id as u32);
+                // TODO: Prevent rays from hitting their origin triangle
+                // writemask &= !hit_ids.cmp_eq(tri_id as u32);
 
                 closest_inter_t.0 = _mm512_mask_mov_ps(closest_inter_t.0, writemask, inter.t.0);
                 hitmask |= writemask;
@@ -293,86 +288,69 @@ impl RaytracerSimd {
 
                 // TODO: alpha
             }
-
-            // if let Some(closest_inter) = maybe_closest_inter {
-            //     let geo = closest_inter.specific;
-            //     match geo {
-            //         IntersectionGeo::Tri(tri_inter) => {
-            //             let tri = tri_inter.tri;
-            //             match &tri.shader {
-            //                 PerVertex(per_vertex) => {
-            //                     // currently this is emissive
-            //                     let w = tri_inter.w;
-            //                     let v = tri_inter.v;
-            //                     let u = tri_inter.u;
-            //
-            //                     let colors = per_vertex.colors;
-            //                     let r = w * colors[0][0] + v * colors[1][0] + u * colors[2][0];
-            //                     let g = w * colors[0][1] + v * colors[1][1] + u * colors[2][1];
-            //                     let b = w * colors[0][2] + v * colors[1][2] + u * colors[2][2];
-            //
-            //                     // make it much brighter if it's indirect bounce
-            //                     if bounces > 0 {
-            //                         return Bgraf32::from_rgb_f32(r, g, b).mul_scalar(10.);
-            //                     } else {
-            //                         return Bgraf32::from_rgb_f32(r, g, b);
-            //                     }
-            //                 }
-            //                 Material(material) => {
-            //                     if material.emission >= 1. {
-            //                         // Do not bounce if fully emissive
-            //                         if bounces > 0 {
-            //                             return material.color.mul_scalar(material.emission);
-            //                         } else {
-            //                             // To avoid color clipping, don't multiply direct rays by more than 1
-            //                             return material.color;
-            //                         }
-            //                     } else {
-            //                         let mut n = closest_inter.n;
-            //                         if n.dot(ray_dir) > 0. {
-            //                             // If normal is facing the wrong direction, flip it
-            //                             n = n.mul_scalar(-1.);
-            //                         }
-            //
-            //                         let point_on_sphere =
-            //                             closest_inter.p.add(random_unit_vector(&mut self.scalar_prng));
-            //                         let point_on_sphere_shifted = point_on_sphere.add(n);
-            //                         let lambertian_ray_dir =
-            //                             point_on_sphere_shifted.sub(closest_inter.p).normalize();
-            //                         // lambertian_ray_dir now should have a lambertian distribution
-            //
-            //                         return material.color.mul_elementwise(self.zaytrace_ray(
-            //                             maybe_closest_inter_geo_id,
-            //                             closest_inter.p,
-            //                             lambertian_ray_dir,
-            //                             bounces + 1,
-            //                         ));
-            //                     }
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
-
-            let size = U32x16::splat(size_of::<MaterialShader>() as u32);
             
-            let mut ret = Bgra::<F32x16>::from_rgb_f32(0., 0., 0.);
+            // **Look up material for rays**
+            let material_size = U32x16::splat(size_of::<MaterialShader>() as u32);
+            let mut material_color = Bgra::<F32x16>::from_rgb_f32(0., 0., 0.);
+            let mut material_emission = F32x16::zero();
             
-            // blue, green, and then red
+            let material_index = U32x16::from(_mm512_mullo_epi32(hit_ids.0, material_size.0));
+            let material_color_offset = offset_of!(MaterialShader, color); // in bytes
+            let material_emission_offset = offset_of!(MaterialShader, emission); // in bytes
+            // Look up color. Blue, green, and then red
             for i in 0..3 {
-                let bgraf32_offset = offset_of!(MaterialShader, color); // in bytes
-                let channel_offset = U32x16::splat((bgraf32_offset + i*4) as u32); // in bytes
-
-                let color_offsets = U32x16::from(_mm512_mullo_epi32(hit_ids.0, size.0)) + channel_offset;
-                ret.val[i] = F32x16::from(_mm512_mask_i32gather_ps::<1>(
-                    ret.val[i].0,
+                let channel_offset = U32x16::splat((material_color_offset + i*4) as u32); // in bytes
+                
+                let color_index = material_index + channel_offset;
+                material_color.val[i] = F32x16::from(_mm512_mask_i32gather_ps::<1>(
+                    material_color.val[i].0,
                     hitmask,
-                    color_offsets.0,
+                    color_index.0,
                     self.shaders.as_ptr() as *const f32,
                 ));
             }
+            
+            let emission_index = material_index + U32x16::splat(material_emission_offset as u32);
+            material_emission = F32x16::from(_mm512_mask_i32gather_ps::<1>(
+                material_emission.0,
+                hitmask,
+                emission_index.0,
+                self.shaders.as_ptr() as *const f32,
+            ));
+            
+            /*
+            if material.emission >= 1. {
+                // Do not bounce if fully emissive
+                if bounces > 0 {
+                    return material.color.mul_scalar(material.emission);
+                } else {
+                    // To avoid color clipping, don't multiply direct rays by more than 1
+                    return material.color;
+                }
+            } else {
+                let mut n = closest_inter.n;
+                if n.dot(ray_dir) > 0. {
+                    // If normal is facing the wrong direction, flip it
+                    n = n.mul_scalar(-1.);
+                }
 
-            return ret;
+                let point_on_sphere =
+                    closest_inter.p.add(random_unit_vector(&mut self.scalar_prng));
+                let point_on_sphere_shifted = point_on_sphere.add(n);
+                let lambertian_ray_dir =
+                    point_on_sphere_shifted.sub(closest_inter.p).normalize();
+                // lambertian_ray_dir now should have a lambertian distribution
+
+                return material.color.mul_elementwise(self.zaytrace_ray(
+                    maybe_closest_inter_geo_id,
+                    closest_inter.p,
+                    lambertian_ray_dir,
+                    bounces + 1,
+                ));
+            }
+            */
+
+            return material_color;
         }
     }
 }
