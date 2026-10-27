@@ -22,7 +22,7 @@ pub struct TriSimd {
 impl TriSimd {
     /// Test 16 rays against this triangle
     #[allow(non_snake_case)]
-    pub fn intersect(&self, O: Vec3f32, D: Vec3::<F32x16>) -> TriIntersectionSimd {
+    pub fn intersect(&self, O: Vec3::<F32x16>, D: Vec3::<F32x16>) -> TriIntersectionSimd {
         let v1 = self.v[0];
         let v2 = self.v[1];
         let v3 = self.v[2];
@@ -35,9 +35,9 @@ impl TriSimd {
         let A = Mat33::<F32x16>::from_col_vecs(D.mul_scalar(-1.0), v2.sub(v1).splat(), v3.sub(v1).splat());
         let b = O.sub(v1.into());
 
-        let t = A.det_with_col_replaced::<0>(b.splat()) / A.det();
-        let u = A.det_with_col_replaced::<1>(b.splat()) / A.det();
-        let v = A.det_with_col_replaced::<2>(b.splat()) / A.det();
+        let t = A.det_with_col_replaced::<0>(b) / A.det();
+        let u = A.det_with_col_replaced::<1>(b) / A.det();
+        let v = A.det_with_col_replaced::<2>(b) / A.det();
 
         bitfield_no_hit |= t.cmp_lt(0.);
 
@@ -48,6 +48,6 @@ impl TriSimd {
 
         let p = v1.splat().mul_scalar(w).add(v2.splat().mul_scalar(u)).add(v3.splat().mul_scalar(v));
 
-        TriIntersectionSimd { p, n, t, w, u, v, hitmask: !bitfield_no_hit }
+        TriIntersectionSimd { p, n: n.normalize(), t, w, u, v, hitmask: !bitfield_no_hit }
     }
 }

@@ -10,5 +10,6 @@ pub const BUF_SIZE: usize = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 
 pub const MAX_ACCUMULATE_STEPS: u32 = 128;
 pub const DITHER_DIVISOR: usize = 256;
+pub const MAX_BOUNCES: u8 = 16;
 
 pub type RaytracerBuf = [u8; BUF_SIZE];

@@ -34,6 +34,16 @@ impl Vec3f32 {
     }
 }
 
+impl Vec3<F32x16> {
+    pub fn zero() -> Self {
+        return Self { val: [
+            F32x16::zero(), 
+            F32x16::zero(), 
+            F32x16::zero()
+        ] };
+    }
+}
+
 pub trait Sqrt {
     type Output;
     fn sqrt(self) -> Self::Output;
@@ -91,11 +101,11 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
     
-    pub fn div_scalar(self: Vec3<T>, b: T) -> Vec3<T> {
+    pub fn div_scalar<U: Into<T> + Copy>(self: Vec3<T>, b: U) -> Vec3<T> {
         return Vec3 { val: [
-            self.val[0] / b,
-            self.val[1] / b,
-            self.val[2] / b,
+            self.val[0] / b.into(),
+            self.val[1] / b.into(),
+            self.val[2] / b.into(),
         ]};
     }
 

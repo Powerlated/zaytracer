@@ -5,8 +5,7 @@ pub mod rng_portable_simd;
 use std::arch::x86_64::*;
 use std::f32::consts::PI;
 use std::ops::Div;
-use std::simd::num::{SimdFloat, SimdUint};
-use std::simd::{f32x16, i32x16, simd_swizzle, u8x16, u32x16, u64x4, u64x16};
+use std::simd::{u32x16, u64x16};
 
 use bytemuck::offset_of;
 use rand::rngs::Xoshiro128PlusPlus;
@@ -39,31 +38,72 @@ fn random_jitter(prng: &mut Xoshiro128PlusPlusSimd<16>) -> (F32x16, F32x16) {
     );
 }
 
-// 3D vector that is evenly distributed on the unit sphere
-fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3f32 {
-    loop {
-        // get 64 bits of randomness
-        let next = ((prng.next_u32() as u64) << 32) | (prng.next_u32() as u64);
+struct RandomUnitVectorGenerator {
+    prng: Xoshiro128PlusPlusSimd<16>,
+    buf: [[f32; 32]; 3],
+    buf_pos: usize,
+}
 
-        // split it in three to get three 21-bit vars where each bit is I.I.D.
-        let xyz_int: [u64; 3] = [
-            next & 0x1FFFFF,
-            (next >> 21) & 0x1FFFFF,
-            (next >> 42) & 0x1FFFFF,
-        ];
+impl RandomUnitVectorGenerator {
+    fn new() -> Self {
+        Self {
+            prng: Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(
+                std::array::from_fn::<u64, 16, _>(|i| i as u64),
+            )),
+            buf: [[0.0; 32]; 3],
+            buf_pos: 0,
+        }
+    }
 
-        let mut xyz_float =
-            Vec3f32::from_xyz(xyz_int[0] as f32, xyz_int[1] as f32, xyz_int[2] as f32);
+    // 3D unit vector that is evenly distributed on the unit sphere
+    fn next(&mut self) -> Vec3<F32x16> {
+        loop {
+            // get three random values - 96 bits of randomness per vector
+            let xyz_int: [u32x16; 3] = [
+                self.prng.next_u32(),
+                self.prng.next_u32(),
+                self.prng.next_u32(),
+            ];
 
-        xyz_float = xyz_float
-            .div_scalar(0x1FFFFF as f32)
-            .sub(Vec3f32::from_xyz(0.5, 0.5, 0.5))
-            .mul_scalar(2.0);
+            let xyz_float = Vec3::<F32x16>::from_xyz(
+                F32x16::from(xyz_int[0]),
+                F32x16::from(xyz_int[1]),
+                F32x16::from(xyz_int[2])
+            );
 
-        let xyz_magn = xyz_float.magn();
+            // map [0, 0xFFFFFFFF] to [-1, 1]
+            let xyz_float = xyz_float
+                .div_scalar(0xFFFFFFFFu32 as f32)
+                .sub(Vec3::<F32x16>::from_xyz(0.5.into(), 0.5.into(), 0.5.into()))
+                .mul_scalar(2.0);
 
-        if xyz_magn <= 1.0 && xyz_magn > 0.01 {
-            return xyz_float.normalize();
+            let xyz_magn = xyz_float.magn();
+            // vectors with magnitude less than 1 and greater than 0.01 are valid
+            let valid_mask = xyz_magn.cmp_le(1.0) & xyz_magn.cmp_gt(0.01);
+
+            // after this, all vectors that satisfy the valid condition will be I.I.D. unit vectors
+            let xyz_float = xyz_float.normalize();
+
+            // write the valid unit vectors into the output buffer
+            unsafe {
+                _mm512_mask_compressstoreu_ps((&mut self.buf[0][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[0].0);
+                _mm512_mask_compressstoreu_ps((&mut self.buf[1][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[1].0);
+                _mm512_mask_compressstoreu_ps((&mut self.buf[2][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[2].0);
+                self.buf_pos += valid_mask.count_ones() as usize;
+                
+                // we have enough valid unit vectors to return 16 unit vectors
+                if self.buf_pos >= 16 {
+                    self.buf_pos -= 16;
+                    
+                    return Vec3::<F32x16> {
+                        val: [
+                            F32x16::from_array(self.buf[0][self.buf_pos..self.buf_pos+16].try_into().unwrap()),
+                            F32x16::from_array(self.buf[1][self.buf_pos..self.buf_pos+16].try_into().unwrap()),
+                            F32x16::from_array(self.buf[2][self.buf_pos..self.buf_pos+16].try_into().unwrap())
+                        ]
+                    }
+                }
+            }
         }
     }
 }
@@ -78,7 +118,7 @@ const ACCUMULATOR_BUF_LEN: usize = HEIGHT * WIDTH as usize / 16;
 
 pub struct RaytracerSimd {
     main_prng: Xoshiro128PlusPlusSimd<16>,
-    scalar_prng: Xoshiro128PlusPlus,
+    random_unit_vector_gen: RandomUnitVectorGenerator,
     geos: Vec<TriSimd>,
     shaders: Vec<MaterialShader>,
     accumulator_buf: Box<[Bgra<F32x16>; ACCUMULATOR_BUF_LEN]>,
@@ -108,7 +148,7 @@ impl RaytracerSimd {
             main_prng: Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(
                 std::array::from_fn::<u64, 16, _>(|i| i as u64),
             )),
-            scalar_prng: Xoshiro128PlusPlus::seed_from_u64(0),
+            random_unit_vector_gen: RandomUnitVectorGenerator::new(),
             geos,
             shaders,
             accumulator_buf: vec![Bgra::<F32x16>::zero(); ACCUMULATOR_BUF_LEN]
@@ -252,72 +292,151 @@ impl RaytracerSimd {
         let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into())
             .normalize();
 
-        return self.zaytrace_ray(ray_pos, ray_dir, 0, 0xFFFF);
+        return self.zaytrace_ray(U32x16::from(0xFFFFFFFFu32), ray_pos.splat(), ray_dir, 0, 0xFFFF);
     }
 
     // **Inner raytracing loop** :D
     // Traces 16 rays in parallel
-    const MAX_BOUNCES: u8 = 16;
     fn zaytrace_ray(
         &mut self,
-        ray_pos: Vec3f32,
+        origin_ids: U32x16,
+        ray_pos: Vec3<F32x16>,
         ray_dir: Vec3<F32x16>,
         bounces: u8,
-        activemask: u16 // rays that are still 'alive' i.e. still bouncing around
+        mut active_mask: u16 // rays that are still 'alive' i.e. still bouncing around
     ) -> Bgra<F32x16> {
         // TODO: Bounce limit
-        // if bounces > Self::MAX_BOUNCES {
-        //     return Bgraf32::from_rgb_f32(0., 0., 0.);
-        // }
+        if bounces > MAX_BOUNCES {
+            return Bgra::<F32x16>::from_rgb_f32(0.0, 0.0, 0.0);
+        }
 
         unsafe {
-            let mut closest_inter_t = F32x16::splat(1000.0);
-            let mut hitmask: u16 = 0; // rays, that in this current bounce, have hit a triangle
-            let mut hit_ids = U32x16::splat(0);
+            let mut hit_mask: u16 = 0; // rays, that in this current bounce, have hit a triangle
+            let mut hit_ids = U32x16::splat(0xFFFFFFFF);
+            
+            let mut hit_t = F32x16::splat(1000.0);
+            let mut hit_n = Vec3::<F32x16>::zero();
+            let mut hit_pos = Vec3::<F32x16>::zero();
 
+            assert!(self.geos.len() > 0);
             for (tri_id, tri) in self.geos.iter().enumerate() {
-                let inter = tri.intersect(ray_pos, ray_dir);
-                let mut writemask = inter.hitmask & inter.t.cmp_lt(closest_inter_t);
+                let hit = tri.intersect(ray_pos, ray_dir);
 
-                // TODO: Prevent rays from hitting their origin triangle
-                // writemask &= !hit_ids.cmp_eq(tri_id as u32);
+                {
+                    let mut write_mask = hit.hitmask & hit.t.cmp_lt(hit_t);
+                    
+                    // Prevent rays from hitting their origin triangle
+                    write_mask &= origin_ids.cmp_neq(tri_id as u32);
 
-                closest_inter_t.0 = _mm512_mask_mov_ps(closest_inter_t.0, writemask, inter.t.0);
-                hitmask |= writemask;
-                hit_ids = U32x16::from(_mm512_mask_mov_epi32(hit_ids.0, writemask, _mm512_set1_epi32(tri_id as i32)));
+                    // Update the hit_<x> variables for rays we've found a closer intersection for this iteration
+                    hit_t.0 = _mm512_mask_mov_ps(hit_t.0, write_mask, hit.t.0);
+                    hit_n.val[0].0 = _mm512_mask_mov_ps(hit_n.val[0].0, write_mask, _mm512_set1_ps(hit.n.val[0])); 
+                    hit_n.val[1].0 = _mm512_mask_mov_ps(hit_n.val[1].0, write_mask, _mm512_set1_ps(hit.n.val[1])); 
+                    hit_n.val[2].0 = _mm512_mask_mov_ps(hit_n.val[2].0, write_mask, _mm512_set1_ps(hit.n.val[2])); 
+                    hit_pos.val[0].0 = _mm512_mask_mov_ps(hit_pos.val[0].0, write_mask, hit.p.val[0].0); 
+                    hit_pos.val[1].0 = _mm512_mask_mov_ps(hit_pos.val[1].0, write_mask, hit.p.val[1].0); 
+                    hit_pos.val[2].0 = _mm512_mask_mov_ps(hit_pos.val[2].0, write_mask, hit.p.val[2].0); 
+
+                    hit_mask |= write_mask;
+                    hit_ids = U32x16::from(_mm512_mask_mov_epi32(hit_ids.0, write_mask, _mm512_set1_epi32(tri_id as i32)));
+                }
 
                 // TODO: alpha
             }
+
+            active_mask &= hit_mask;
             
-            // **Look up material for rays**
-            let material_size = U32x16::splat(size_of::<MaterialShader>() as u32);
             let mut material_color = Bgra::<F32x16>::from_rgb_f32(0., 0., 0.);
             let mut material_emission = F32x16::zero();
             
-            let material_index = U32x16::from(_mm512_mullo_epi32(hit_ids.0, material_size.0));
-            let material_color_offset = offset_of!(MaterialShader, color); // in bytes
-            let material_emission_offset = offset_of!(MaterialShader, emission); // in bytes
-            // Look up color. Blue, green, and then red
-            for i in 0..3 {
-                let channel_offset = U32x16::splat((material_color_offset + i*4) as u32); // in bytes
+            // **Look up material for rays**
+            {
+                let material_size = U32x16::splat(size_of::<MaterialShader>() as u32);
+                let material_index = U32x16::from(_mm512_mullo_epi32(hit_ids.0, material_size.0));
+                let material_color_offset = offset_of!(MaterialShader, color); // in bytes
+                let material_emission_offset = offset_of!(MaterialShader, emission); // in bytes
+                // Look up color. Blue, green, and then red
+                for i in 0..3 {
+                    let channel_offset = U32x16::splat((material_color_offset + i*4) as u32); // in bytes
+                    
+                    let color_index = material_index + channel_offset;
+                    material_color.val[i] = F32x16::from(_mm512_mask_i32gather_ps::<1>(
+                        material_color.val[i].0,
+                        hit_mask,
+                        color_index.0,
+                        self.shaders.as_ptr() as *const f32,
+                    ));
+                }
                 
-                let color_index = material_index + channel_offset;
-                material_color.val[i] = F32x16::from(_mm512_mask_i32gather_ps::<1>(
-                    material_color.val[i].0,
-                    hitmask,
-                    color_index.0,
+                let emission_index = material_index + U32x16::splat(material_emission_offset as u32);
+                material_emission = F32x16::from(_mm512_mask_i32gather_ps::<1>(
+                    material_emission.0,
+                    hit_mask,
+                    emission_index.0,
                     self.shaders.as_ptr() as *const f32,
                 ));
             }
-            
-            let emission_index = material_index + U32x16::splat(material_emission_offset as u32);
-            material_emission = F32x16::from(_mm512_mask_i32gather_ps::<1>(
-                material_emission.0,
-                hitmask,
-                emission_index.0,
-                self.shaders.as_ptr() as *const f32,
-            ));
-            
+
+            let mut ret = Bgra::<F32x16>::from_rgb_f32(0.0, 0.0, 0.0);
+            let emissive_mask = material_emission.cmp_ge(1.0);
+
+            // **Handle emission**
+            if emissive_mask != 0 {
+                // Do not bounce if fully emissive
+                active_mask &= !emissive_mask;
+
+                if bounces > 0 {
+                    for i in 0..3 {
+                        ret.val[i] = F32x16::from(_mm512_mask_mov_ps(ret.val[i].0, emissive_mask, (material_color.val[i] * material_emission).0)) 
+                    }
+                } else {
+                    // To avoid color clipping, don't apply gain to direct rays
+                    for i in 0..3 {
+                        ret.val[i] = F32x16::from(_mm512_mask_mov_ps(ret.val[i].0, emissive_mask, material_color.val[i].0)) 
+                    }
+                }
+            }
+
+            // **Handle diffuse**
+            if emissive_mask != 0xFFFF {
+                let mut n = hit_n;
+
+                // If normal is facing the wrong direction, flip sign
+                {
+                    let normal_facing_wrong_direction_mask = n.dot(ray_dir).cmp_gt(0.0);
+                    // Evil floating point bit level magic hacking??????
+                    let sign_bit: __m512 = std::mem::transmute(_mm512_set1_epi32(0x80000000u32 as i32));
+                    n.val[0].0 = _mm512_mask_xor_ps(n.val[0].0, normal_facing_wrong_direction_mask, n.val[0].0, sign_bit);
+                    n.val[1].0 = _mm512_mask_xor_ps(n.val[1].0, normal_facing_wrong_direction_mask, n.val[1].0, sign_bit);
+                    n.val[2].0 = _mm512_mask_xor_ps(n.val[2].0, normal_facing_wrong_direction_mask, n.val[2].0, sign_bit);
+                }
+
+                let point_on_sphere = hit_pos.add(self.random_unit_vector_gen.next());
+                let point_on_sphere_shifted = point_on_sphere.add(n);
+                let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize();
+
+                // Bounce if there are still rays active 
+                if active_mask != 0 {
+                    let bounced = self.zaytrace_ray(
+                        hit_ids,
+                        hit_pos,
+                        lambertian_ray_dir,
+                        bounces + 1,
+                        active_mask
+                    );
+
+                    ret.val[0].0 = _mm512_mask_mul_ps(ret.val[0].0, active_mask, material_color.val[0].0, bounced.val[0].0);
+                    ret.val[1].0 = _mm512_mask_mul_ps(ret.val[1].0, active_mask, material_color.val[1].0, bounced.val[1].0);
+                    ret.val[2].0 = _mm512_mask_mul_ps(ret.val[2].0, active_mask, material_color.val[2].0, bounced.val[2].0);
+                    // ret.val[3].0 = _mm512_mask_mul_ps(ret.val[3].0, active_mask, material_color.val[3].0, bounced.val[3].0);
+
+                    // ret.val[0].0 = _mm512_mask_mov_ps(ret.val[0].0, active_mask, _mm512_abs_ps(n.val[0].0));
+                    // ret.val[1].0 = _mm512_mask_mov_ps(ret.val[1].0, active_mask, _mm512_abs_ps(n.val[1].0));
+                    // ret.val[2].0 = _mm512_mask_mov_ps(ret.val[2].0, active_mask, _mm512_abs_ps(n.val[2].0));
+                    // ret.val[3].0 = _mm512_mask_mov_ps(ret.val[3].0, active_mask, _mm512_set1_ps(1.0));
+                }
+            }
+
             /*
             if material.emission >= 1. {
                 // Do not bounce if fully emissive
@@ -350,7 +469,7 @@ impl RaytracerSimd {
             }
             */
 
-            return material_color;
+            return ret;
         }
     }
 }

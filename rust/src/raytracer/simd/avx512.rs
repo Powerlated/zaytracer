@@ -34,6 +34,10 @@ impl U32x16 {
         unsafe { _mm512_cmp_epi32_mask::<_CMP_EQ_OQ>(self.0, b.into().0) }
     }
 
+    pub fn cmp_neq<T: Into<Self>>(self, b: T) -> __mmask16 {
+        unsafe { _mm512_cmp_epi32_mask::<_CMP_NEQ_UQ>(self.0, b.into().0) }
+    }
+
     // pub fn min<T: Into<Self>>(self, b: T) -> U32x16 {
     //     unsafe { U32x16(_mm512_min_ps(self.0, b.into().0)) }
     // }
@@ -127,6 +131,10 @@ pub struct F32x16 (pub __m512);
 impl F32x16 {
     pub const WIDTH: usize = 16;
 
+    pub fn from_array(v: &[f32; 16]) -> Self {
+        unsafe { Self(_mm512_loadu_ps(v.as_ptr())) }
+    }
+
     pub fn zero() -> F32x16 {
         F32x16::splat(0.0)
     }
@@ -159,8 +167,24 @@ impl F32x16 {
         unsafe { _mm512_cmp_ps_mask::<_CMP_LT_OS>(self.0, b.into().0) }
     }
 
+    pub fn cmp_gt<T: Into<Self>>(self, b: T) -> __mmask16 {
+        unsafe { _mm512_cmp_ps_mask::<_CMP_GT_OS>(self.0, b.into().0) }
+    }
+
+    pub fn cmp_le<T: Into<Self>>(self, b: T) -> __mmask16 {
+        unsafe { _mm512_cmp_ps_mask::<_CMP_LE_OS>(self.0, b.into().0) }
+    }
+
+    pub fn cmp_ge<T: Into<Self>>(self, b: T) -> __mmask16 {
+        unsafe { _mm512_cmp_ps_mask::<_CMP_GE_OS>(self.0, b.into().0) }
+    }
+
     pub fn cmp_eq<T: Into<Self>>(self, b: T) -> __mmask16 {
         unsafe { _mm512_cmp_ps_mask::<_CMP_EQ_OS>(self.0, b.into().0) }
+    }
+
+    pub fn cmp_neq<T: Into<Self>>(self, b: T) -> __mmask16 {
+        unsafe { _mm512_cmp_ps_mask::<_CMP_NEQ_OS>(self.0, b.into().0) }
     }
 }
 
@@ -183,6 +207,12 @@ impl From<std::simd::u32x16> for F32x16 {
     }
 }
 
+impl From<U32x16> for F32x16 {
+    fn from(v: U32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_cvtepu32_ps(v.0)) }
+    }
+}
+
 impl From<__m512> for F32x16 {
     fn from(v: __m512) -> F32x16 {
         unsafe { F32x16(v) }
@@ -198,8 +228,8 @@ impl Into<[f32; 16]> for F32x16 {
 } 
 
 impl From<&[f32; 16]> for F32x16 {
-    fn from(v: &[f32; 16]) -> F32x16 {
-        unsafe { F32x16(_mm512_loadu_ps(v.as_ptr())) }
+    fn from(v: &[f32; 16]) -> Self {
+        Self::from_array(v)
     }
 }
 

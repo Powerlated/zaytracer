@@ -215,9 +215,8 @@ impl RaytracerScalar {
     }
 
     // **Inner raytracing loop** :D
-    const MAX_BOUNCES: u8 = 16;
     fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3f32, ray_dir: Vec3f32, bounces: u8) -> Bgraf32 {
-        if bounces > Self::MAX_BOUNCES  { return Bgraf32::from_rgb_f32(0., 0., 0.); }
+        if bounces > MAX_BOUNCES  { return Bgraf32::from_rgb_f32(0., 0., 0.); }
 
         let mut closest_inter_t: f32 = 1000.0;
         let mut maybe_closest_inter: Option<Intersection> = None;
