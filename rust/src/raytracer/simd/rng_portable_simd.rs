@@ -8,6 +8,7 @@
 // except according to those terms.
 
 use core::convert::Infallible;
+use core::simd::Simd;
 use std::{ops::{Add, Shl}, simd::{num::SimdUint, *}};
 
 /// A xoshiro128++ random number generator.
@@ -19,23 +20,23 @@ use std::{ops::{Add, Shl}, simd::{num::SimdUint, *}};
 /// reference source code](http://xoshiro.di.unimi.it/xoshiro128plusplus.c) by
 /// David Blackman and Sebastiano Vigna.
 /// 
-pub struct Xoshiro128PlusPlusSimd {
-    s: [u32x4; 4],
+pub struct Xoshiro128PlusPlusSimd<const W: usize> {
+    s: [Simd<u32, W>; 4],
 }
 
-impl Xoshiro128PlusPlusSimd {
+impl<const W: usize> Xoshiro128PlusPlusSimd<W> {
     /// Create a new `Xoshiro128PlusPlus` from a `u64` seed.
     ///
     /// This uses the SplitMix64 generator internally.
     #[inline]
-    pub fn seed_from_u64(mut state: u64x4) -> Self {
-        const PHI: u64x4 = u64x4::splat(0x9e3779b97f4a7c15);
-        let mut s = [u32x4::default(); 4];
+    pub fn seed_from_u64(mut state: Simd::<u64, W>) -> Self {
+        let phi: Simd::<u64, W> = Simd::splat(0x9e3779b97f4a7c15);
+        let mut s = [Simd::<u32, W>::default(); 4];
         for i in s.chunks_exact_mut(2) {
-            state += PHI;
+            state += phi;
             let mut z = state;
-            z = (z ^ (z >> 30)) * u64x4::splat(0xbf58476d1ce4e5b9);
-            z = (z ^ (z >> 27)) * u64x4::splat(0x94d049bb133111eb);
+            z = (z ^ (z >> 30)) * Simd::<u64, W>::splat(0xbf58476d1ce4e5b9);
+            z = (z ^ (z >> 27)) * Simd::<u64, W>::splat(0x94d049bb133111eb);
             z = z ^ (z >> 31);
             i[0] = z.cast::<u32>();
             i[1] = (z >> 32).cast::<u32>();
@@ -44,7 +45,7 @@ impl Xoshiro128PlusPlusSimd {
         Xoshiro128PlusPlusSimd { s }
     }
 
-    pub fn next_u32(&mut self) -> u32x4 {
+    pub fn next_u32(&mut self) -> Simd<u32, W> {
         let intermed = self.s[0] + self.s[3];
         let res = ((intermed << 7) | (intermed >> (32 - 7))) + self.s[0];
 

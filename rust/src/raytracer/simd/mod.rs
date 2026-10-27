@@ -25,13 +25,13 @@ type GeoId = usize;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
-fn random_jitter(prng: &mut Xoshiro128PlusPlus) -> (f32, f32) {
-    let x_jitter_int = prng.next_u32() & 0xFFFFFFFF;
-    let y_jitter_int = prng.next_u32() & 0xFFFFFFFF;
+fn random_jitter(prng: &mut Xoshiro128PlusPlusSimd<16>) -> (F32x16, F32x16) {
+    let x_jitter_int = prng.next_u32() & u32x16::splat(0xFFFFFFFF);
+    let y_jitter_int = prng.next_u32() & u32x16::splat(0xFFFFFFFF);
 
     return (
-        (x_jitter_int as f32) / (0xFFFFFFFFu32 as f32) - 0.5,
-        (y_jitter_int as f32) / (0xFFFFFFFFu32 as f32) - 0.5,
+        F32x16::from(x_jitter_int) / (0xFFFFFFFFu32 as f32) - 0.5,
+        F32x16::from(y_jitter_int) / (0xFFFFFFFFu32 as f32) - 0.5,
     );
 }
 
@@ -72,7 +72,8 @@ fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
 const ACCUMULATOR_BUF_LEN: usize = HEIGHT * WIDTH as usize;
 
 pub struct RaytracerSimd {
-    main_prng: Xoshiro128PlusPlus,
+    main_prng: Xoshiro128PlusPlusSimd<16>,
+    scalar_prng: Xoshiro128PlusPlus,
     geos: Vec<Geo>,
     accumulator_buf: Box<[Bgraf32; ACCUMULATOR_BUF_LEN]>,
     accumulate_steps: u32,
@@ -81,8 +82,11 @@ pub struct RaytracerSimd {
 impl RaytracerSimd {
     pub fn from_scalar(raytracer_scalar: RaytracerScalar) -> Self {
         Self {
-            // start the PRNGs from 0 seed always
-            main_prng: Xoshiro128PlusPlus::seed_from_u64(0),
+            // start the PRNGs from consistent seed always
+            main_prng: Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(
+                std::array::from_fn::<u64, 16, _>(|i| i as u64),
+            )),
+            scalar_prng: Xoshiro128PlusPlus::seed_from_u64(0),
             geos: raytracer_scalar.geos,
             accumulator_buf: vec![Bgraf32::zero(); ACCUMULATOR_BUF_LEN]
                 .into_boxed_slice()
@@ -129,23 +133,33 @@ impl RaytracerSimd {
                 //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
                 //      and z points into the screen, away from the viewer.)
 
-                for col in 0..WIDTH {
+                for col_stepped in (0..WIDTH).step_by(16) {
                     // **First, trace one ray per pixel, and then update the accumulator
                     // buffer with the cumulative average.**
 
+                    let col_offs = F32x16::from(&std::array::from_fn::<_, 16, _>(|i| i as f32));
+                    let col = F32x16::from(col_stepped as f32) + col_offs;
+
                     let jitter = random_jitter(&mut self.main_prng);
-                    let row_jittered = (row as f32) + jitter.0;
-                    let col_jittered = (col as f32) + jitter.1;
 
-                    let norm_y = map_range(row_jittered, 0., HEIGHT as f32, -1., 1.);
-                    let norm_x = map_range(col_jittered, 0., WIDTH as f32, -1., 1.);
+                    let row_jittered = F32x16::from(row as f32) + jitter.0;
+                    let col_jittered = col + jitter.1;
 
-                    // trace the ray
-                    let mut new_px = self.zaytrace_image_inner(norm_x, norm_y);
+                    let norm_y = map_range(row_jittered, 0.0.into(), (HEIGHT as f32 - 1.0).into(), (-1.0).into(), (1.0).into());
+                    let norm_x = map_range(col_jittered, 0.0.into(), (WIDTH as f32 - 1.0).into(), (-1.0).into(), (1.0).into());
 
-                    // perform antialiasing accumulate
-                    let acc_px = &mut self.accumulator_buf[row * WIDTH + col];
-                    *acc_px = (*acc_px).add(new_px);
+                    // TODO
+                    for i in 0..16 {
+                        let norm_y: [f32; 16] = norm_y.into();
+                        let norm_x: [f32; 16] = norm_x.into();
+                        // trace the ray
+                        let mut new_px = self.zaytrace_image_inner(norm_x[i], norm_y[i]);
+
+                        // perform antialiasing accumulate
+                        let acc_px = &mut self.accumulator_buf[row * WIDTH + col_stepped + i];
+                        *acc_px = (*acc_px).add(new_px);
+                    }
+
                 }
             }
 
@@ -222,7 +236,7 @@ impl RaytracerSimd {
                                         let a =
                                             w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
 
-                                        if a > random_alpha(&mut self.main_prng) {
+                                        if a > random_alpha(&mut self.scalar_prng) {
                                             continue;
                                         }
                                     }
@@ -296,7 +310,7 @@ impl RaytracerSimd {
                                 // **Lambertian diffuse bounce**
                                 // get a random point on the unit sphere around the hit location
                                 let point_on_sphere =
-                                    closest_inter.p.add(random_unit_vector(&mut self.main_prng));
+                                    closest_inter.p.add(random_unit_vector(&mut self.scalar_prng));
                                 // shift that point 1 unit away from the hit point along the normal vector
                                 let point_on_sphere_shifted = point_on_sphere.add(n);
                                 let lambertian_ray_dir =

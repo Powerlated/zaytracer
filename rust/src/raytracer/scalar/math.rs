@@ -360,6 +360,6 @@ pub const fn deg_to_rad(deg: f32) -> f32 {
 }
 
 /// Linearly maps a value from a source range to a target range
-pub fn map_range(s: f32, a1: f32, a2: f32, b1: f32, b2: f32) -> f32 {
+pub fn map_range<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy>(s: T, a1: T, a2: T, b1: T, b2: T) -> T {
     return b1 + (s - a1) * (b2 - b1) / (a2 - a1);
 }
