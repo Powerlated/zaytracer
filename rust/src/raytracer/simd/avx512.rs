@@ -20,10 +20,19 @@ impl Into<[u8; 16]> for U8x16 {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct U32x16 (pub __m512i);
 
 impl U32x16 {
     pub const WIDTH: usize = 16;
+
+    pub fn splat(scalar: u32) -> U32x16 {
+        unsafe { U32x16(_mm512_set1_epi32(scalar as i32)) }
+    }
+
+    pub fn cmp_eq<T: Into<Self>>(self, b: T) -> __mmask16 {
+        unsafe { _mm512_cmp_epi32_mask::<_CMP_EQ_OQ>(self.0, b.into().0) }
+    }
 
     // pub fn min<T: Into<Self>>(self, b: T) -> U32x16 {
     //     unsafe { U32x16(_mm512_min_ps(self.0, b.into().0)) }
@@ -40,13 +49,19 @@ impl U32x16 {
 
 impl From<u32> for U32x16 {
     fn from(scalar: u32) -> U32x16 {
-        unsafe { U32x16(_mm512_set1_epi32(scalar as i32)) }
+        Self::splat(scalar)
     }
 }
 
 impl From<std::simd::u32x16> for U32x16 {
     fn from(v: std::simd::u32x16) -> U32x16 {
         U32x16(v.into())
+    }
+}
+
+impl From<__m512i> for U32x16 {
+    fn from(v: __m512i) -> U32x16 {
+        Self(v)
     }
 }
 
@@ -112,6 +127,10 @@ pub struct F32x16 (pub __m512);
 impl F32x16 {
     pub const WIDTH: usize = 16;
 
+    pub fn zero() -> F32x16 {
+        F32x16::splat(0.0)
+    }
+
     pub fn splat(scalar: f32) -> F32x16 {
         unsafe { F32x16(_mm512_set1_ps(scalar)) }
     }
@@ -139,6 +158,10 @@ impl F32x16 {
     pub fn cmp_lt<T: Into<Self>>(self, b: T) -> __mmask16 {
         unsafe { _mm512_cmp_ps_mask::<_CMP_LT_OS>(self.0, b.into().0) }
     }
+
+    pub fn cmp_eq<T: Into<Self>>(self, b: T) -> __mmask16 {
+        unsafe { _mm512_cmp_ps_mask::<_CMP_EQ_OS>(self.0, b.into().0) }
+    }
 }
 
 impl Sqrt for F32x16 {
@@ -157,6 +180,12 @@ impl From<f32> for F32x16 {
 impl From<std::simd::u32x16> for F32x16 {
     fn from(v: std::simd::u32x16) -> F32x16 {
         unsafe { F32x16(_mm512_cvtepu32_ps(v.into())) }
+    }
+}
+
+impl From<__m512> for F32x16 {
+    fn from(v: __m512) -> F32x16 {
+        unsafe { F32x16(v) }
     }
 }
 

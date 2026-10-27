@@ -1,6 +1,9 @@
+use bytemuck::{Pod, Zeroable};
+
 use crate::raytracer::math::Bgraf32;
 
-#[derive(Clone)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+#[repr(C)]
 pub struct MaterialShader {
     pub color: Bgraf32,
     pub emission: f32,
@@ -13,6 +16,12 @@ impl MaterialShader {
 
     pub fn new_emissive(r: f32, g: f32, b: f32, emission: f32) -> MaterialShader {
         return Self { color: Bgraf32::from_rgb_f32(r, g, b), emission: emission };
+    }
+}
+
+impl Default for MaterialShader {
+    fn default() -> Self {
+        Self::new_diffuse(1., 1., 1.)    
     }
 }
 

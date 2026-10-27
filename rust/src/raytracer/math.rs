@@ -160,6 +160,15 @@ impl Bgraf32 {
                 Self::color_f32_to_255(self.val[2]),
                 Self::color_f32_to_255(self.val[3])];
     }
+
+    pub fn splat(self) -> Bgra<F32x16> {
+        return Bgra { val: [
+            F32x16::splat(self.val[0]),
+            F32x16::splat(self.val[1]),
+            F32x16::splat(self.val[2]),
+            F32x16::splat(self.val[3])
+        ] };
+    }
 }
 
 impl Bgra<F32x16> {
@@ -174,6 +183,11 @@ impl Bgra<F32x16> {
 }
 
 impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy> Bgra<T> {
+    pub const INDEX_B: usize = 0;
+    pub const INDEX_G: usize = 1;
+    pub const INDEX_R: usize = 2;
+    pub const INDEX_A: usize = 3;
+
     pub fn add(self: Bgra<T>, b: Bgra<T>) -> Bgra<T> {
         return Bgra { val: [
             self.val[0] + b.val[0],

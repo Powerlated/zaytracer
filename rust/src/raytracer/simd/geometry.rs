@@ -2,14 +2,14 @@ use crate::raytracer::{math::{Bgra, Mat33, Mat33f32, Vec3, Vec3f32}, scalar::sha
 
 pub struct TriIntersectionSimd {
     pub p: Vec3::<F32x16>, // Point of intersection
-    pub n: Vec3f32, // Normalized normal vector of intersection surface
     pub t: F32x16, // t value of intersection
-
+    
     pub w: F32x16,
     pub u: F32x16,
     pub v: F32x16,
-
-    pub bitfield_hit: u16,
+    
+    pub n: Vec3f32, // Normalized normal vector of intersection surface
+    pub hitmask: u16,
 }
 
 
@@ -17,7 +17,6 @@ pub struct TriIntersectionSimd {
 pub struct TriSimd {
     // Vertices. typical notation in math is (A, B, C)
     pub v: [Vec3f32; 3],
-    pub shader: MaterialShader,
 }
 
 impl TriSimd {
@@ -49,6 +48,6 @@ impl TriSimd {
 
         let p = v1.splat().mul_scalar(w).add(v2.splat().mul_scalar(u)).add(v3.splat().mul_scalar(v));
 
-        TriIntersectionSimd { p, n, t, w, u, v, bitfield_hit: !bitfield_no_hit }
+        TriIntersectionSimd { p, n, t, w, u, v, hitmask: !bitfield_no_hit }
     }
 }
