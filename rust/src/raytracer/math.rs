@@ -14,10 +14,11 @@ trait One {
 
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 #[repr(transparent)]
-pub struct Vec3<T> {
-    pub val: [T; 3]
+pub struct Vec3Base<T, const P: usize> {
+    pub val: [T; 3],
 }
 
+pub type Vec3<T> = Vec3Base<T, 0>;
 pub type Vec3f32 = Vec3<f32>;
 
 impl Vec3f32 {
@@ -35,6 +36,7 @@ impl Vec3f32 {
 }
 
 impl Vec3<F32x16> {
+    #[inline]
     pub fn zero() -> Self {
         return Self { val: [
             F32x16::zero(), 

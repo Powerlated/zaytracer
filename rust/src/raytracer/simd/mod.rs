@@ -134,18 +134,23 @@ impl RaytracerSimd {
         let mut shaders = Vec::new();
 
         // geos[0] is placeholder
-        geos.push(TriSimd { v: [Vec3f32::zero(); 3]});
+        geos.push(TriSimd {
+            v: [Vec3f32::zero(); 3],
+            v2_sub_v0: Vec3f32::zero(),
+            v1_sub_v0: Vec3f32::zero(),
+            n: Vec3f32::zero(),
+        });
         // shaders[0] is backgrond color
         shaders.push(MaterialShader { color: Bgraf32::from_rgb_f32(0., 0., 0.), emission: 0.0 });
 
         for geo in raytracer_scalar.geos {
             match geo {
                 Geo::Tri(tri) => {
-                    geos.push(TriSimd { v: tri.v });
                     shaders.push(match tri.shader {
                         Material(material) => material,
                         _ => unimplemented!(),
                     });
+                    geos.push(TriSimd::from_scalar_tri(tri));
                 }
                 _ => unimplemented!(),
             }
@@ -319,6 +324,7 @@ impl RaytracerSimd {
 
     // **Inner raytracing loop** :D
     // Traces 16 rays in parallel
+    #[inline(never)]
     fn zaytrace_ray(
         &mut self,
         ray_color: &mut Bgra::<F32x16>,
@@ -328,9 +334,6 @@ impl RaytracerSimd {
         bounces: u8,
         mut active_mask: u16 // rays that are still 'alive' i.e. still bouncing around
     ) {
-        self.lanes_active += active_mask.count_ones() as u64;
-        self.lanes_computed += 16;
-
         unsafe {
             // Bounce limit
             if bounces > MAX_BOUNCES {
@@ -339,6 +342,9 @@ impl RaytracerSimd {
                 ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(0.0));
                 return;
             }
+
+            self.lanes_active += active_mask.count_ones() as u64;
+            self.lanes_computed += 16;
 
             let mut hit_mask: u16 = 0; // rays, that in this current bounce, have hit a triangle
             let mut hit_ids = U32x16::splat(0);
@@ -448,12 +454,6 @@ impl RaytracerSimd {
                 ray_color.val[0].0 = _mm512_mask_mul_ps(ray_color.val[0].0, active_mask, material_color.val[0].0, ray_color.val[0].0);
                 ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
                 ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
-                // ret.val[3].0 = _mm512_mask_mul_ps(ret.val[3].0, active_mask, material_color.val[3].0, bounced.val[3].0);
-
-                // ret.val[0].0 = _mm512_mask_mov_ps(ret.val[0].0, active_mask, _mm512_abs_ps(n.val[0].0));
-                // ret.val[1].0 = _mm512_mask_mov_ps(ret.val[1].0, active_mask, _mm512_abs_ps(n.val[1].0));
-                // ret.val[2].0 = _mm512_mask_mov_ps(ret.val[2].0, active_mask, _mm512_abs_ps(n.val[2].0));
-                // ret.val[3].0 = _mm512_mask_mov_ps(ret.val[3].0, active_mask, _mm512_set1_ps(1.0));
 
                 become self.zaytrace_ray(
                     ray_color,
