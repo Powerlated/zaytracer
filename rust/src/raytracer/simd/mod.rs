@@ -1,4 +1,5 @@
 pub mod avx512;
+pub mod geometry;
 pub mod rng_portable_simd;
 
 use std::arch::x86_64::*;
@@ -9,19 +10,19 @@ use std::simd::{f32x16, i32x16, simd_swizzle, u8x16, u32x16, u64x4, u64x16};
 
 use rand::rngs::Xoshiro128PlusPlus;
 use rand::{Rng, SeedableRng};
+use wgpu::naga::VectorSize::Tri;
 
 use crate::raytracer::scalar::RaytracerScalar;
 use crate::raytracer::scalar::geometry::{
     Geo, Intersection, IntersectionGeo, cube, square, transform_in_place,
 };
-use crate::raytracer::scalar::math::{Bgraf32, Mat33, Vec3, deg_to_rad, hsv_to_rgb, map_range};
+use crate::raytracer::math::{Bgra, Bgraf32, Mat33f32, Vec3, Vec3f32, deg_to_rad, hsv_to_rgb, map_range};
 use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
 use crate::raytracer::simd::avx512::*;
+use crate::raytracer::simd::geometry::TriSimd;
 use crate::raytracer::simd::rng_portable_simd::Xoshiro128PlusPlusSimd;
 use crate::raytracer::*;
-
-type GeoId = usize;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
@@ -36,7 +37,7 @@ fn random_jitter(prng: &mut Xoshiro128PlusPlusSimd<16>) -> (F32x16, F32x16) {
 }
 
 // 3D vector that is evenly distributed on the unit sphere
-fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
+fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3f32 {
     loop {
         // get 64 bits of randomness
         let next = ((prng.next_u32() as u64) << 32) | (prng.next_u32() as u64);
@@ -48,11 +49,11 @@ fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
             (next >> 42) & 0x1FFFFF,
         ];
 
-        let mut xyz_float = Vec3::from_xyz(xyz_int[0] as f32, xyz_int[1] as f32, xyz_int[2] as f32);
+        let mut xyz_float = Vec3f32::from_xyz(xyz_int[0] as f32, xyz_int[1] as f32, xyz_int[2] as f32);
 
         xyz_float = xyz_float
             .div_scalar(0x1FFFFF as f32)
-            .sub(Vec3::from_xyz(0.5, 0.5, 0.5))
+            .sub(Vec3f32::from_xyz(0.5, 0.5, 0.5))
             .mul_scalar(2.0);
 
         let xyz_magn = xyz_float.magn();
@@ -69,26 +70,43 @@ fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
     return (int as f32) / (0xFFFFFFFFu32 as f32);
 }
 
-const ACCUMULATOR_BUF_LEN: usize = HEIGHT * WIDTH as usize;
+const ACCUMULATOR_BUF_LEN: usize = HEIGHT * WIDTH as usize / 16;
 
 pub struct RaytracerSimd {
     main_prng: Xoshiro128PlusPlusSimd<16>,
     scalar_prng: Xoshiro128PlusPlus,
-    geos: Vec<Geo>,
-    accumulator_buf: Box<[Bgraf32; ACCUMULATOR_BUF_LEN]>,
+    geos: Vec<TriSimd>,
+    accumulator_buf: Box<[Bgra::<F32x16>; ACCUMULATOR_BUF_LEN]>,
     accumulate_steps: u32,
 }
 
 impl RaytracerSimd {
     pub fn from_scalar(raytracer_scalar: RaytracerScalar) -> Self {
+        let mut geos = Vec::new();
+
+        for geo in raytracer_scalar.geos {
+            match geo {
+                Geo::Tri(tri) => {
+                    geos.push(TriSimd {
+                        v: tri.v,
+                        shader: match tri.shader {
+                            Material(material) => material,
+                            _ => unimplemented!(),
+                        },
+                    });
+                }
+                _ => unimplemented!()
+            }
+        }
+
         Self {
             // start the PRNGs from consistent seed always
             main_prng: Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(
                 std::array::from_fn::<u64, 16, _>(|i| i as u64),
             )),
             scalar_prng: Xoshiro128PlusPlus::seed_from_u64(0),
-            geos: raytracer_scalar.geos,
-            accumulator_buf: vec![Bgraf32::zero(); ACCUMULATOR_BUF_LEN]
+            geos,
+            accumulator_buf: vec![Bgra::<F32x16>::zero(); ACCUMULATOR_BUF_LEN]
                 .into_boxed_slice()
                 .try_into()
                 .unwrap(),
@@ -97,32 +115,71 @@ impl RaytracerSimd {
     }
 
     fn update_and_dither_output_buffer(&mut self, buf: &mut RaytracerBuf) {
-        let mut dither_prng = Xoshiro128PlusPlusSimd::seed_from_u64(u64x4::from(
-            std::array::from_fn::<u64, 4, _>(|i| i as u64),
+        let mut dither_prng = Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(
+            std::array::from_fn::<u64, 16, _>(|i| i as u64),
         ));
 
-        let acc_buf: &mut [[f32; 16]] = bytemuck::cast_slice_mut(&mut *self.accumulator_buf);
-        let out_buf: &mut [[u8; 16]] = bytemuck::cast_slice_mut(buf);
+        // 16 pixels
+        let out_buf: &mut [[u8; 16*4]] = bytemuck::cast_slice_mut(buf);
+        // An Rgbf32::<F32x16> is 16 pixels 
 
-        for (acc, out) in acc_buf.iter().zip(out_buf.iter_mut()) {
+        // 16 pixels per iteration
+        for (acc, out) in self.accumulator_buf.iter().zip(out_buf.iter_mut()) {
             let int = dither_prng.next_u32();
 
-            let uniform_rect_dist = (F32x4::from(int) / (0xFFFFFFFFu32 as f32) - 0.5)
+            let uniform_rect_dist = (F32x16::from(int) / (0xFFFFFFFFu32 as f32) - 0.5)
                 * (1. / (DITHER_DIVISOR as f32));
 
-            let scaled_f32 = F32x16::from(acc) / (self.accumulate_steps as f32);
+            let inv_accumulate_steps: F32x16 = (self.accumulate_steps as f32).into(); 
+            let dithered_f32_b = acc.val[0] * inv_accumulate_steps + uniform_rect_dist;
+            let dithered_f32_g = acc.val[1] * inv_accumulate_steps + uniform_rect_dist;
+            let dithered_f32_r = acc.val[2] * inv_accumulate_steps + uniform_rect_dist;
+            let scaled_f32_a = acc.val[3] * inv_accumulate_steps;
 
-            let swizzled = unsafe {
-                _mm512_permutexvar_ps(_mm512_set_epi32(
-                    3,3,3,3, 2,2,2,2, 1,1,1,1, 0,0,0,0,
-                ), _mm512_broadcast_f32x4(uniform_rect_dist.0))
-            };
+            // // Construct the first 4 pixels in f32
+            // unsafe {
+            //     // Construct BG
+            //     // let permute = _mm512_permutex2var_ps;
+            //     // idx[i+3:i] is the index into the source vectors 
+            //     // idx[i+4] should be 1 to select b 
+            //     let indices: [u8; 16] = [
+            //         0,
+            //         0,
+            //         0b00000,
+            //         0b10000,
+            //         0,
+            //         0,
+            //         0b00001,
+            //         0b10001,
+            //         0,
+            //         0,
+            //         0b00010,
+            //         0b10010,
+            //         0,
+            //         0,
+            //         0b00011,
+            //         0b10011,
+            //     ];
+            //     let indices = _mm_loadu_epi8(indices.as_ptr() as *const i8);
+            //     let indices = _mm512_cvtepi8_epi32(indices);
+            //     let mask: u16 = 0b1100110011001100;
+            //     _mm512_mask2_permutex2var_ps(dithered_f32_b.0, indices, mask, dithered_f32_g.0);
+            // }
 
-            let dithered_f32 = scaled_f32 + F32x16(swizzled);
-            let color_255: U8x16 = ((dithered_f32.clamp(0.0, 1.0) * 255.0) + 0.5).into();
+            let dithered_f32_b_arr: [f32; 16] = dithered_f32_b.into(); 
+            let dithered_f32_g_arr: [f32; 16] = dithered_f32_g.into(); 
+            let dithered_f32_r_arr: [f32; 16] = dithered_f32_r.into(); 
 
-            let x: [u8; 16] = color_255.into();
-            out.copy_from_slice(&x);
+            // TODO: Vectorize this
+            for i in 0..16 {
+                let out_pixel = &mut out[i*4..i*4+4];
+                out_pixel[0] = ((dithered_f32_b_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+                out_pixel[1] = ((dithered_f32_g_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+                out_pixel[2] = ((dithered_f32_r_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+                out_pixel[3] = 0xFF;
+            }
+
+            // let color_255: U8x16 = ((dithered_f32.clamp(0.0, 1.0) * 255.0) + 0.5).into();
         }
     }
 
@@ -145,21 +202,14 @@ impl RaytracerSimd {
                     let row_jittered = F32x16::from(row as f32) + jitter.0;
                     let col_jittered = col + jitter.1;
 
-                    let norm_y = map_range(row_jittered, 0.0.into(), (HEIGHT as f32 - 1.0).into(), (-1.0).into(), (1.0).into());
-                    let norm_x = map_range(col_jittered, 0.0.into(), (WIDTH as f32 - 1.0).into(), (-1.0).into(), (1.0).into());
+                    let norm_y = map_range(row_jittered, 0.0, HEIGHT as f32 - 1.0, -1.0, 1.0);
+                    let norm_x = map_range(col_jittered, 0.0, WIDTH as f32 - 1.0, -1.0, 1.0);
 
-                    // TODO
-                    for i in 0..16 {
-                        let norm_y: [f32; 16] = norm_y.into();
-                        let norm_x: [f32; 16] = norm_x.into();
-                        // trace the ray
-                        let mut new_px = self.zaytrace_image_inner(norm_x[i], norm_y[i]);
+                    let new_pixels = self.zaytrace_image_inner(norm_x, norm_y);
 
-                        // perform antialiasing accumulate
-                        let acc_px = &mut self.accumulator_buf[row * WIDTH + col_stepped + i];
-                        *acc_px = (*acc_px).add(new_px);
-                    }
-
+                    // perform antialiasing accumulate
+                    let acc_pixels = &mut self.accumulator_buf[(row * WIDTH + col_stepped) / 16];
+                    *acc_pixels = (*acc_pixels).add(new_pixels);
                 }
             }
 
@@ -174,7 +224,7 @@ impl RaytracerSimd {
     // `norm_x` and `norm_y` are Vulkan-style normalized
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
-    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Bgraf32 {
+    fn zaytrace_image_inner(&mut self, norm_x: F32x16, flipped_norm_y: F32x16) -> Bgra<F32x16> {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
 
@@ -190,148 +240,130 @@ impl RaytracerSimd {
         let x_dir_unnormalized = norm_x * x_outer_bound;
         let y_dir_unnormalized = norm_y * y_outer_bound;
 
-        let ray_pos = Vec3::from_xyz(0., 0., -2.);
-        let ray_dir = Vec3::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.).normalize();
+        let ray_pos = Vec3f32::from_xyz(0.0, 0.0, -2.0);
+        let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into()).normalize();
 
-        return self.zaytrace_ray(None, ray_pos, ray_dir, 0);
+        return self.zaytrace_ray(ray_pos, ray_dir, 0);
     }
 
     // **Inner raytracing loop** :D
     const MAX_BOUNCES: u8 = 16;
     fn zaytrace_ray(
         &mut self,
-        maybe_origin_geo_id: Option<GeoId>,
-        ray_pos: Vec3,
-        ray_dir: Vec3,
+        ray_pos: Vec3f32,
+        ray_dir: Vec3::<F32x16>,
         bounces: u8,
-    ) -> Bgraf32 {
-        if bounces > Self::MAX_BOUNCES {
-            return Bgraf32::from_rgb_f32(0., 0., 0.);
-        }
+    ) -> Bgra<F32x16> {
+        // TODO: Bounce limit
+        // if bounces > Self::MAX_BOUNCES {
+        //     return Bgraf32::from_rgb_f32(0., 0., 0.);
+        // }
 
-        let mut closest_inter_t: f32 = 1000.0;
-        let mut maybe_closest_inter: Option<Intersection> = None;
-        let mut maybe_closest_inter_geo_id: Option<GeoId> = None;
+        // let mut closest_inter_t: f32 = 1000.0;
+        // let mut maybe_closest_inter: Option<Intersection> = None;
+        // let mut maybe_closest_inter_geo_id: Option<GeoId> = None;
 
-        for (geo_id, geo) in self.geos.iter().enumerate() {
-            if let Some(origin_geo_id) = maybe_origin_geo_id
-                && origin_geo_id == geo_id
-            {
-                continue;
-            };
+        for (geo_id, tri) in self.geos.iter().enumerate() {
+            // TODO: Prevent rays from hitting their origin triangle. 
+            // if let Some(origin_geo_id) = maybe_origin_geo_id
+            //     && origin_geo_id == geo_id
+            // {
+            //     continue;
+            // };
 
-            match geo {
-                Geo::Tri(tri) => {
-                    if let Some((inter, tri_inter)) = tri.intersect(ray_pos, ray_dir) {
-                        if inter.t < closest_inter_t {
-                            // TODO: alpha only applies to direct rays so far. add separate indirect/direct bounce settings
-                            if bounces == 0 {
-                                match &tri.shader {
-                                    PerVertex(per_vertex) => {
-                                        let w = tri_inter.w;
-                                        let v = tri_inter.v;
-                                        let u = tri_inter.u;
+            let intersection = tri.intersect(ray_pos, ray_dir);
 
-                                        let colors = per_vertex.colors;
-                                        let a =
-                                            w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
-
-                                        if a > random_alpha(&mut self.scalar_prng) {
-                                            continue;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-
-                            closest_inter_t = inter.t;
-                            maybe_closest_inter = Some(inter);
-                            maybe_closest_inter_geo_id = Some(geo_id);
-                        }
-                    }
-                }
-                _ => unimplemented!(),
+            if intersection.bitfield_hit & 1 != 0 {
+                return Bgra::<F32x16>::from_rgb_f32(1.0, 1.0, 1.0);
             }
+
+            // if inter.t < closest_inter_t {
+            //     // TODO: alpha only applies to direct rays so far. add separate indirect/direct bounce settings
+            //     if bounces == 0 {
+            //         match &tri.shader {
+            //             PerVertex(per_vertex) => {
+            //                 let w = tri_inter.w;
+            //                 let v = tri_inter.v;
+            //                 let u = tri_inter.u;
+            //
+            //                 let colors = per_vertex.colors;
+            //                 let a =
+            //                     w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
+            //
+            //                 if a > random_alpha(&mut self.scalar_prng) {
+            //                     continue;
+            //                 }
+            //             }
+            //             _ => {}
+            //         }
+            //     }
+            //
+            //     closest_inter_t = inter.t;
+            //     maybe_closest_inter = Some(inter);
+            //     maybe_closest_inter_geo_id = Some(geo_id);
+            // }
         }
 
-        if let Some(closest_inter) = maybe_closest_inter {
-            let geo = closest_inter.specific;
-            match geo {
-                IntersectionGeo::Tri(tri_inter) => {
-                    let tri = tri_inter.tri;
-                    match &tri.shader {
-                        PerVertex(per_vertex) => {
-                            // currently this is emissive
-                            let w = tri_inter.w;
-                            let v = tri_inter.v;
-                            let u = tri_inter.u;
+        // if let Some(closest_inter) = maybe_closest_inter {
+        //     let geo = closest_inter.specific;
+        //     match geo {
+        //         IntersectionGeo::Tri(tri_inter) => {
+        //             let tri = tri_inter.tri;
+        //             match &tri.shader {
+        //                 PerVertex(per_vertex) => {
+        //                     // currently this is emissive
+        //                     let w = tri_inter.w;
+        //                     let v = tri_inter.v;
+        //                     let u = tri_inter.u;
+        //
+        //                     let colors = per_vertex.colors;
+        //                     let r = w * colors[0][0] + v * colors[1][0] + u * colors[2][0];
+        //                     let g = w * colors[0][1] + v * colors[1][1] + u * colors[2][1];
+        //                     let b = w * colors[0][2] + v * colors[1][2] + u * colors[2][2];
+        //
+        //                     // make it much brighter if it's indirect bounce
+        //                     if bounces > 0 {
+        //                         return Bgraf32::from_rgb_f32(r, g, b).mul_scalar(10.);
+        //                     } else {
+        //                         return Bgraf32::from_rgb_f32(r, g, b);
+        //                     }
+        //                 }
+        //                 Material(material) => {
+        //                     if material.emission >= 1. {
+        //                         // Do not bounce if fully emissive
+        //                         if bounces > 0 {
+        //                             return material.color.mul_scalar(material.emission);
+        //                         } else {
+        //                             // To avoid color clipping, don't multiply direct rays by more than 1
+        //                             return material.color;
+        //                         }
+        //                     } else {
+        //                         let mut n = closest_inter.n;
+        //                         if n.dot(ray_dir) > 0. {
+        //                             // If normal is facing the wrong direction, flip it
+        //                             n = n.mul_scalar(-1.);
+        //                         }
+        //
+        //                         let point_on_sphere =
+        //                             closest_inter.p.add(random_unit_vector(&mut self.scalar_prng));
+        //                         let point_on_sphere_shifted = point_on_sphere.add(n);
+        //                         let lambertian_ray_dir =
+        //                             point_on_sphere_shifted.sub(closest_inter.p).normalize();
+        //                         // lambertian_ray_dir now should have a lambertian distribution
+        //
+        //                         return material.color.mul_elementwise(self.zaytrace_ray(
+        //                             maybe_closest_inter_geo_id,
+        //                             closest_inter.p,
+        //                             lambertian_ray_dir,
+        //                             bounces + 1,
+        //                         ));
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
-                            let colors = per_vertex.colors;
-                            let r = w * colors[0][0] + v * colors[1][0] + u * colors[2][0];
-                            let g = w * colors[0][1] + v * colors[1][1] + u * colors[2][1];
-                            let b = w * colors[0][2] + v * colors[1][2] + u * colors[2][2];
-
-                            // make it much brighter if it's indirect bounce
-                            if bounces > 0 {
-                                return Bgraf32::from_rgb_f32(r, g, b).mul_scalar(10.);
-                            } else {
-                                return Bgraf32::from_rgb_f32(r, g, b);
-                            }
-                        }
-                        Material(material) => {
-                            if material.emission >= 1. {
-                                // Do not bounce if fully emissive
-                                if bounces > 0 {
-                                    return material.color.mul_scalar(material.emission);
-                                } else {
-                                    // To avoid color clipping, don't multiply direct rays by more than 1
-                                    return material.color;
-                                }
-                            } else {
-                                let mut n = closest_inter.n;
-                                if n.dot(ray_dir) > 0. {
-                                    // If normal is facing the wrong direction, flip it
-                                    n = n.mul_scalar(-1.);
-                                }
-
-                                // **Find orthonormal basis**
-                                // Building an Orthonormal Basis, Revisited - Pixar
-                                // https://jcgt.org/published/0006/01/01/
-                                // const x = n.val[0];
-                                // const y = n.val[1];
-                                // const z = n.val[2];
-                                // const sign = std.math.copysign(@as(f32, 1), z); // std.math.copysign is not the same as std.math.sign
-                                // const a = -1.0 / (sign + z);
-                                // const b = x * y * a;
-                                // const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };
-                                // const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
-                                // now <n, b1, b2> is an orthonormal basis
-
-                                // **Lambertian diffuse bounce**
-                                // get a random point on the unit sphere around the hit location
-                                let point_on_sphere =
-                                    closest_inter.p.add(random_unit_vector(&mut self.scalar_prng));
-                                // shift that point 1 unit away from the hit point along the normal vector
-                                let point_on_sphere_shifted = point_on_sphere.add(n);
-                                let lambertian_ray_dir =
-                                    point_on_sphere_shifted.sub(closest_inter.p).normalize();
-                                // lambertian_ray_dir now should have a lambertian distribution
-
-                                // assert(bounce_dir.dot(n) > 0);
-                                return material.color.mul_elementwise(self.zaytrace_ray(
-                                    maybe_closest_inter_geo_id,
-                                    closest_inter.p,
-                                    lambertian_ray_dir,
-                                    bounces + 1,
-                                ));
-                                // .mul_scalar(lambertian_scalar);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return Bgraf32::from_rgb_f32(0., 0., 0.);
+        return Bgra::<F32x16>::zero();
     }
 }

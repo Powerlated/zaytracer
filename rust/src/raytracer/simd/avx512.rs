@@ -2,7 +2,7 @@
 
 use std::{arch::x86_64::*, ops::*};
 
-use crate::raytracer::scalar::math::Bgraf32;
+use crate::raytracer::math::{Bgraf32, Sqrt};
 
 pub struct U8x16 (pub __m128i);
 
@@ -106,13 +106,17 @@ impl Mul<u32> for U32x16 {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct F32x16 (pub __m512);
 
 impl F32x16 {
     pub const WIDTH: usize = 16;
 
-    pub fn splat(v: F32x4) -> F32x16 {
+    pub fn splat(scalar: f32) -> F32x16 {
+        unsafe { F32x16(_mm512_set1_ps(scalar)) }
+    }
+
+    pub fn splat_f32x4(v: F32x4) -> F32x16 {
         unsafe { F32x16(_mm512_broadcast_f32x4(v.0)) }
     }
 
@@ -127,11 +131,26 @@ impl F32x16 {
     pub fn clamp<T: Into<Self>>(self, min: T, max: T) -> F32x16 {
         Self::max(min.into(), Self::min(self, max))
     }
+
+    pub fn abs(self) -> F32x16 {
+        unsafe { F32x16(_mm512_abs_ps(self.0)) }
+    }
+
+    pub fn cmp_lt<T: Into<Self>>(self, b: T) -> __mmask16 {
+        unsafe { _mm512_cmp_ps_mask::<_CMP_LT_OS>(self.0, b.into().0) }
+    }
+}
+
+impl Sqrt for F32x16 {
+    type Output = F32x16;
+    fn sqrt(self) -> Self::Output {
+        unsafe { F32x16(_mm512_sqrt_ps(self.0)) }
+    }
 }
 
 impl From<f32> for F32x16 {
     fn from(scalar: f32) -> F32x16 {
-        unsafe { F32x16(_mm512_set1_ps(scalar)) }
+        F32x16::splat(scalar)
     }
 }
 

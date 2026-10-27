@@ -2,22 +2,56 @@ use std::ops::*;
 
 use bytemuck::{Pod, Zeroable};
 
-#[derive(Clone, Copy, Default, Pod, Zeroable)]
-#[repr(C)]
-pub struct Vec3 {
-    pub val: [f32; 3]
+use crate::raytracer::simd::avx512::F32x16;
+
+trait Zero {
+    fn zero();
 }
 
-impl Vec3 {
-    pub fn zero() -> Vec3 {
-        return Vec3 { val: [0.0, 0.0, 0.0] };
+trait One {
+    fn one();
+}
+
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
+#[repr(transparent)]
+pub struct Vec3<T> {
+    pub val: [T; 3]
+}
+
+pub type Vec3f32 = Vec3<f32>;
+
+impl Vec3f32 {
+    pub fn zero() -> Self {
+        return Self { val: [0.0, 0.0, 0.0] };
     }
 
-    pub fn from_xyz(x: f32, y: f32, z: f32) -> Vec3 {
+    pub fn splat(self) -> Vec3<F32x16> {
+        return Vec3::<F32x16> { val: [
+            F32x16::from(self.val[0]),
+            F32x16::from(self.val[1]),
+            F32x16::from(self.val[2])
+        ] };
+    }
+}
+
+pub trait Sqrt {
+    type Output;
+    fn sqrt(self) -> Self::Output;
+}
+
+impl Sqrt for f32 {
+    type Output = f32;
+    fn sqrt(self) -> Self::Output {
+        self.sqrt()
+    }
+}
+
+impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Sqrt<Output = T> + Copy> Vec3<T> {
+    pub fn from_xyz(x: T, y: T, z: T) -> Vec3<T> {
         return Vec3 { val: [x, y, z] };
     }
 
-    pub fn add(self: Vec3, b: Vec3) -> Vec3 {
+    pub fn add(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] + b.val[0],
             self.val[1] + b.val[1],
@@ -25,7 +59,7 @@ impl Vec3 {
         ]};
     }
 
-    pub fn sub(self: Vec3, b: Vec3) -> Vec3 {
+    pub fn sub(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] - b.val[0],
             self.val[1] - b.val[1],
@@ -33,15 +67,15 @@ impl Vec3 {
         ]};
     }
 
-    pub fn mul_scalar(self: Vec3, b: f32) -> Vec3 {
+    pub fn mul_scalar<U: Into<T> + Copy>(self: Vec3<T>, b: U) -> Vec3<T> {
         return Vec3 { val: [
-            self.val[0] * b,
-            self.val[1] * b,
-            self.val[2] * b,
+            self.val[0] * b.into(),
+            self.val[1] * b.into(),
+            self.val[2] * b.into(),
         ]};
     }
 
-    pub fn mul_elementwise(self: Vec3, b: Vec3) -> Vec3 {
+    pub fn mul_elementwise(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] * b.val[0],
             self.val[1] * b.val[1],
@@ -49,7 +83,7 @@ impl Vec3 {
         ]};
     }
 
-    pub fn div(self: Vec3, b: f32) -> Vec3 {
+    pub fn div(self: Vec3<T>, b: T) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] / b,
             self.val[1] / b,
@@ -57,7 +91,7 @@ impl Vec3 {
         ]};
     }
     
-    pub fn div_scalar(self: Vec3, b: f32) -> Vec3 {
+    pub fn div_scalar(self: Vec3<T>, b: T) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] / b,
             self.val[1] / b,
@@ -65,14 +99,14 @@ impl Vec3 {
         ]};
     }
 
-    pub fn dot(self: Vec3, b: Vec3) -> f32 {
+    pub fn dot<U: Into<Self> + Copy>(self: Vec3<T>, b: U) -> T {
         return 
-            self.val[0] * b.val[0] +
-            self.val[1] * b.val[1] +
-            self.val[2] * b.val[2];
+            self.val[0] * b.into().val[0] +
+            self.val[1] * b.into().val[1] +
+            self.val[2] * b.into().val[2];
     }
 
-    pub fn cross(self: Vec3, b_vec3: Vec3) -> Vec3 {
+    pub fn cross(self: Vec3<T>, b_vec3: Vec3<T>) -> Vec3<T> {
         let a = self.val;
         let b = b_vec3.val;
         let x = 0;
@@ -81,19 +115,25 @@ impl Vec3 {
         return Vec3 { val: [a[y] * b[z] - a[z] * b[y], a[z] * b[x] - a[x] * b[z], a[x] * b[y] - a[y] * b[x]] };
     }
 
-    pub fn proj(self: Vec3, v: Vec3) -> Vec3 {
+    pub fn proj(self: Vec3<T>, v: Vec3<T>) -> Vec3<T> {
         let u = self;
         return u.mul_scalar(v.dot(u) / u.dot(u));
     }
 
-    pub fn magn(self: Vec3) -> f32 {
-        return f32::sqrt(self.val[0] * self.val[0] +
-                         self.val[1] * self.val[1] +
-                         self.val[2] * self.val[2]);
+    pub fn magn(self: Vec3<T>) -> T {
+        return (self.val[0] * self.val[0] +
+                self.val[1] * self.val[1] +
+                self.val[2] * self.val[2]).sqrt();
     }
 
-    pub fn normalize(self: Vec3) -> Vec3 {
+    pub fn normalize(self: Vec3<T>) -> Vec3<T> {
         return self.div(self.magn());
+    }
+}
+
+impl Into<Vec3<F32x16>> for Vec3f32 {
+    fn into(self) -> Vec3<F32x16> {
+        self.splat()
     }
 }
 
@@ -119,6 +159,17 @@ impl Bgraf32 {
                 Self::color_f32_to_255(self.val[1]),
                 Self::color_f32_to_255(self.val[2]),
                 Self::color_f32_to_255(self.val[3])];
+    }
+}
+
+impl Bgra<F32x16> {
+    pub fn from_rgb_f32(r: f32, g: f32, b: f32) -> Bgra<F32x16>  {
+        return Bgra { val: [b.into(), g.into(), r.into(), 1.0.into()] };
+    }
+
+    pub fn zero() -> Bgra<F32x16> {
+        let zero = F32x16::from(0.0);
+        return Bgra { val: [zero, zero, zero, zero] };
     }
 }
 
@@ -211,12 +262,12 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Bgraf32 {
 }
 
 #[derive(Clone, Copy)]
-pub struct Mat33 {
-    pub val: [f32; 9]
+pub struct Mat33<T> {
+    pub val: [T; 9]
 }
 
-impl Mat33 {
-    pub fn det(self: &Mat33) -> f32 {
+impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy> Mat33<T> {
+    pub fn det(&self) -> T {
         let v = self.val;
         let a = v[0];
         let b = v[1];
@@ -233,8 +284,8 @@ impl Mat33 {
 
     // Calculates determinant of `self`, with column at column index (0-indexed)
     // `col_i` replaced with `col`.
-    pub fn det_with_col_replaced<const COL_I: usize>(self: &Mat33, col: Vec3) -> f32 {
-        let mut replaced: Mat33 = self.clone();
+    pub fn det_with_col_replaced<const COL_I: usize>(&self, col: Vec3<T>) -> T {
+        let mut replaced: Self = self.clone();
 
         const { assert!(COL_I <= 2, "col_i must be between 0 and 2 for this 3x3 matrix") };
 
@@ -245,27 +296,31 @@ impl Mat33 {
         return replaced.det();
     }
 
-    pub fn from_col_vecs(v0: Vec3, v1: Vec3, v2: Vec3) -> Mat33 {
-        return Mat33 { val: [
+    pub fn from_col_vecs(v0: Vec3<T>, v1: Vec3<T>, v2: Vec3<T>) -> Self {
+        return Self { val: [
             v0.val[0], v1.val[0], v2.val[0],
             v0.val[1], v1.val[1], v2.val[1],
             v0.val[2], v1.val[2], v2.val[2],
         ]};
     }
+}
 
-    pub fn ident() -> Mat33 {
-        return Mat33 { val: [
+pub type Mat33f32 = Mat33<f32>;
+
+impl Mat33f32 {
+    pub fn ident() -> Self {
+        return Self { val: [
             1.0, 0.0, 0.0,
             0.0, 1.0, 0.0,
             0.0, 0.0, 1.0,
         ]};
     }
 
-    pub fn mul_mat(self: &Mat33, b_mat: &Mat33) -> Mat33 {
+    pub fn mul_mat(&self, b_mat: &Self) -> Self {
         let a = self.val;
         let b = b_mat.val;
 
-        let mut mat_val = [0.0; 9]; 
+        let mut mat_val = [0.; 9]; 
         for i in 0..3 {
             for j in 0..3 {
                 mat_val[i * 3 + j] =
@@ -275,14 +330,14 @@ impl Mat33 {
             }
         }
 
-        return Mat33 { val: mat_val };
+        return Self { val: mat_val };
     }
 
-    pub fn mul_vec(self: &Mat33, b_vec: Vec3) -> Vec3 {
+    pub fn mul_vec(&self, b_vec: Vec3<f32>) -> Vec3<f32> {
         let a = self.val;
         let b = b_vec.val;
 
-        let mut vec_val = [0.0; 3];
+        let mut vec_val = [0.; 3];
         for j in 0..3 {
             vec_val[j] =
                 a[j * 3 + 0] * b[0] +
@@ -294,8 +349,8 @@ impl Mat33 {
     }
 
     // Rotate about X-axis
-    pub fn pitch(theta: f32) -> Mat33 {
-        return Mat33 { val: [
+    pub fn pitch(theta: f32) -> Self {
+        return Self { val: [
             1.0, 0.0,         0.0,
             0.0, theta.cos(), -theta.sin(),
             0.0, theta.sin(), theta.cos(),
@@ -303,8 +358,8 @@ impl Mat33 {
     }
 
     // Rotate about Y-axis
-    pub fn yaw(psi: f32) -> Mat33 {
-        return Mat33 { val: [
+    pub fn yaw(psi: f32) -> Self {
+        return Self { val: [
             psi.cos(),  0.0, psi.sin(),
             0.0,        1.0, 0.0,
             -psi.sin(), 0.0, psi.cos(),
@@ -312,18 +367,18 @@ impl Mat33 {
     }
 
     // Rotate about Z-axis
-    pub fn roll(phi: f32) -> Mat33 {
-        return Mat33 { val: [
+    pub fn roll(phi: f32) -> Self {
+        return Self { val: [
             phi.cos(), -phi.sin(), 0.0,
             phi.sin(), phi.cos(),  0.0,
             0.0,       0.0,        1.0,
         ]};
     }
 
-    pub fn rotation(pitch_theta: f32, yaw_psi: f32, roll_phi: f32) -> Mat33 {
-        return Mat33::yaw(deg_to_rad(yaw_psi))
-            .mul_mat(&Mat33::pitch(deg_to_rad(pitch_theta)))
-            .mul_mat(&Mat33::roll(deg_to_rad(roll_phi)));
+    pub fn rotation(pitch_theta: f32, yaw_psi: f32, roll_phi: f32) -> Self {
+        return Self::yaw(deg_to_rad(yaw_psi))
+            .mul_mat(&Self::pitch(deg_to_rad(pitch_theta)))
+            .mul_mat(&Self::roll(deg_to_rad(roll_phi)));
     }
 
     pub fn translate(&mut self, x: f32, y: f32, z: f32) -> Mat44 {
@@ -345,12 +400,12 @@ pub struct Mat44 {
 
 #[cfg(test)]
 mod tests {
-    use crate::raytracer::scalar::math::{Mat33, Vec3};
+    use crate::raytracer::math::{Mat33f32, Vec3f32};
 
     #[test]
     fn identity_is_identity() {
-        let vec = Vec3::from_xyz(1.0, 2.0, 3.0);
-        let transformed = Mat33::ident().mul_vec(vec);
+        let vec = Vec3f32::from_xyz(1.0, 2.0, 3.0);
+        let transformed = Mat33f32::ident().mul_vec(vec);
         assert_eq!(vec.val, transformed.val);
     }
 }
@@ -360,6 +415,6 @@ pub const fn deg_to_rad(deg: f32) -> f32 {
 }
 
 /// Linearly maps a value from a source range to a target range
-pub fn map_range<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy>(s: T, a1: T, a2: T, b1: T, b2: T) -> T {
-    return b1 + (s - a1) * (b2 - b1) / (a2 - a1);
+pub fn map_range<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy, U: Into<T> + Copy>(s: T, a1: U, a2: U, b1: U, b2: U) -> T {
+    return b1.into() + (s - a1.into()) * (b2.into() - b1.into()) / (a2.into() - a1.into());
 }

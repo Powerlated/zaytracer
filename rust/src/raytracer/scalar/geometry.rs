@@ -1,4 +1,4 @@
-use crate::raytracer::scalar::{MaterialShader, TriShader, math::{Mat33, Mat44, Vec3}, shader::TriPerVertexShader};
+use crate::raytracer::scalar::{MaterialShader, TriShader, math::{Mat33, Mat44, Vec3f32}, shader::TriPerVertexShader};
 
 #[derive(Clone)]
 pub enum Geo {
@@ -12,8 +12,8 @@ pub enum IntersectionGeo<'a> {
 }
 
 pub struct Intersection<'a> {
-    pub p: Vec3, // Point of intersection
-    pub n: Vec3, // Normalized normal vector of intersection surface
+    pub p: Vec3f32, // Point of intersection
+    pub n: Vec3f32, // Normalized normal vector of intersection surface
     pub t: f32, // t value of intersection
     pub specific: IntersectionGeo<'a>, 
 }
@@ -21,7 +21,7 @@ pub struct Intersection<'a> {
 #[derive(Clone)]
 pub struct Tri {
     // Vertices. typical notation in math is (A, B, C)
-    pub v: [Vec3; 3],
+    pub v: [Vec3f32; 3],
     pub shader: TriShader,
     // TODO: derive normal direction from winding order?
     // n: Vec3, // n^\hat is normalized normal vector
@@ -40,7 +40,7 @@ impl Tri {
     // `O`: Origin point
     // `D`: Direction vector
     #[allow(non_snake_case)]
-    pub fn intersect(self: &Tri, O: Vec3, D: Vec3) -> Option<(Intersection<'_>, TriIntersection<'_>)> {
+    pub fn intersect(self: &Tri, O: Vec3f32, D: Vec3f32) -> Option<(Intersection<'_>, TriIntersection<'_>)> {
         let v1 = self.v[0];
         let v2 = self.v[1];
         let v3 = self.v[2];
@@ -122,10 +122,10 @@ impl Tri {
 
 #[cfg(test)]
 mod test {
-    use crate::raytracer::scalar::{geometry::Tri, math::Vec3, shader::{MaterialShader, TriShader}};
+    use crate::raytracer::scalar::{geometry::Tri, math::Vec3f32, shader::{MaterialShader, TriShader}};
 
     const EPSILON: f32 = 1e-5;
-    fn expect_intersect(tri: Tri, o: Vec3, d: Vec3, intersect_pos: [f32; 3], t: f32) {
+    fn expect_intersect(tri: Tri, o: Vec3f32, d: Vec3f32, intersect_pos: [f32; 3], t: f32) {
         let maybe_ti = tri.intersect(o, d);
         assert!(maybe_ti.is_some());
         if let Some(ti) = maybe_ti {
@@ -136,7 +136,7 @@ mod test {
         }
     }
     
-    fn expect_no_intersect(tri: Tri, o: Vec3, d: Vec3)  {
+    fn expect_no_intersect(tri: Tri, o: Vec3f32, d: Vec3f32)  {
         let maybe_ti = tri.intersect(o, d);
         // if (maybe_ti) |ti| {
             // std.debug.print("Intersection point at [{} {} {}]", .{ ti.p.val[0], ti.p.val[1], ti.p.val[2] });
@@ -150,32 +150,32 @@ mod test {
 
     #[test]
     fn intersection_1() {
-        let ray_pos = Vec3::from_xyz(0., 0., 0.);
-        let ray_dir = Vec3::from_xyz(0., 0., 1.);
+        let ray_pos = Vec3f32::from_xyz(0., 0., 0.);
+        let ray_dir = Vec3f32::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-1., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: basic_shader() };
+        let tri = Tri { v: [Vec3f32::from_xyz(-1., -1., 1.), Vec3f32::from_xyz(1., -1., 1.), Vec3f32::from_xyz(0., 1., 1.)], shader: basic_shader() };
 
         expect_intersect(tri, ray_pos, ray_dir, [0., 0., 1.], 1.);
     }
 
     #[test]
     fn intersection_2() {
-        let ray_pos = Vec3::from_xyz(5., 0., 0.);
-        let ray_dir = Vec3::from_xyz(0., 0., 1.);
+        let ray_pos = Vec3f32::from_xyz(5., 0., 0.);
+        let ray_dir = Vec3f32::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-10., -1., 1.), Vec3::from_xyz(10., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: basic_shader() };
+        let tri = Tri { v: [Vec3f32::from_xyz(-10., -1., 1.), Vec3f32::from_xyz(10., -1., 1.), Vec3f32::from_xyz(0., 1., 1.)], shader: basic_shader() };
 
         expect_intersect(tri, ray_pos, ray_dir, [5., 0., 1.], 1.);
     }
 
     #[test]
     fn intersection_3() {
-        let ray_pos = Vec3::from_xyz(0., 0., 0.);
-        let ray_dir = Vec3::from_xyz(1., 0., 1.).normalize();
+        let ray_pos = Vec3f32::from_xyz(0., 0., 0.);
+        let ray_dir = Vec3f32::from_xyz(1., 0., 1.).normalize();
 
-        let tri = Tri { v: [Vec3::from_xyz(-10., -100., 1.), Vec3::from_xyz(100., -100., 1.), Vec3::from_xyz(0., 100., 1.)], shader: basic_shader() };
+        let tri = Tri { v: [Vec3f32::from_xyz(-10., -100., 1.), Vec3f32::from_xyz(100., -100., 1.), Vec3f32::from_xyz(0., 100., 1.)], shader: basic_shader() };
 
-        let tri2 = Tri { v: [Vec3::from_xyz(-10., -100., 2.), Vec3::from_xyz(100., -100., 2.), Vec3::from_xyz(0., 100., 2.)], shader: basic_shader() };
+        let tri2 = Tri { v: [Vec3f32::from_xyz(-10., -100., 2.), Vec3f32::from_xyz(100., -100., 2.), Vec3f32::from_xyz(0., 100., 2.)], shader: basic_shader() };
 
         expect_intersect(tri, ray_pos, ray_dir, [1., 0., 1.], f32::sqrt(2.));
         expect_intersect(tri2, ray_pos, ray_dir, [2., 0., 2.], f32::sqrt(2.));
@@ -183,46 +183,46 @@ mod test {
 
     #[test]
     fn non_intersection_1() {
-        let ray_pos = Vec3::from_xyz(0., 0., 0.);
-        let ray_dir = Vec3::from_xyz(0., 1., -1.);
+        let ray_pos = Vec3f32::from_xyz(0., 0., 0.);
+        let ray_dir = Vec3f32::from_xyz(0., 1., -1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-1., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: basic_shader() };
+        let tri = Tri { v: [Vec3f32::from_xyz(-1., -1., 1.), Vec3f32::from_xyz(1., -1., 1.), Vec3f32::from_xyz(0., 1., 1.)], shader: basic_shader() };
 
         expect_no_intersect(tri, ray_pos, ray_dir);
     }
 
     #[test]
     fn non_intersection_2() {
-        let ray_pos = Vec3::from_xyz(5., 0., 0.);
-        let ray_dir = Vec3::from_xyz(0., 0., 1.);
+        let ray_pos = Vec3f32::from_xyz(5., 0., 0.);
+        let ray_dir = Vec3f32::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(-10., -1., 1.), Vec3::from_xyz(1., -1., 1.), Vec3::from_xyz(0., 1., 1.)], shader: basic_shader() };
+        let tri = Tri { v: [Vec3f32::from_xyz(-10., -1., 1.), Vec3f32::from_xyz(1., -1., 1.), Vec3f32::from_xyz(0., 1., 1.)], shader: basic_shader() };
 
         expect_no_intersect(tri, ray_pos, ray_dir);
     }
 
     #[test]
     fn non_intersection_3() {
-        let ray_pos = Vec3::from_xyz(1., -1., 0.);
-        let ray_dir = Vec3::from_xyz(0., 0., 1.);
+        let ray_pos = Vec3f32::from_xyz(1., -1., 0.);
+        let ray_dir = Vec3f32::from_xyz(0., 0., 1.);
 
-        let tri = Tri { v: [Vec3::from_xyz(0.5, 0.5, 1.), Vec3::from_xyz(-0.5, 0.5, 1.), Vec3::from_xyz(0., -0.5, 1.)], shader: basic_shader() };
+        let tri = Tri { v: [Vec3f32::from_xyz(0.5, 0.5, 1.), Vec3f32::from_xyz(-0.5, 0.5, 1.), Vec3f32::from_xyz(0., -0.5, 1.)], shader: basic_shader() };
 
         expect_no_intersect(tri, ray_pos, ray_dir);
     }
 }
 
 struct Sphere {
-    center: Vec3, // typical notation in math is (h, k, j)
+    center: Vec3f32, // typical notation in math is (h, k, j)
     radius: f32,
 }
 
 fn trongle() -> Geo {
     Geo::Tri(Tri {
             v: [
-                Vec3::from_xyz(0.5, -0.5, 1.),
-                Vec3::from_xyz(-0.5, -0.5, 1.),
-                Vec3::from_xyz(0., 0.5, 1.)
+                Vec3f32::from_xyz(0.5, -0.5, 1.),
+                Vec3f32::from_xyz(-0.5, -0.5, 1.),
+                Vec3f32::from_xyz(0., 0.5, 1.)
             ],
             shader: TriShader::PerVertex(
                 TriPerVertexShader { colors: [
@@ -241,18 +241,18 @@ pub fn square(len: f32, shader: TriShader) -> [Geo; 2] {
 
     let t1 = Tri {
         v: [
-            Vec3::from_xyz(-half_len / 2., -half_len / 2., 0.),
-            Vec3::from_xyz(-half_len / 2.,  half_len / 2., 0.),
-            Vec3::from_xyz( half_len / 2.,  half_len / 2., 0.)
+            Vec3f32::from_xyz(-half_len / 2., -half_len / 2., 0.),
+            Vec3f32::from_xyz(-half_len / 2.,  half_len / 2., 0.),
+            Vec3f32::from_xyz( half_len / 2.,  half_len / 2., 0.)
         ],
         shader: shader.clone(),
     };
 
     let t2 = Tri {
         v: [
-            Vec3::from_xyz( half_len / 2., -half_len / 2., 0.),
-            Vec3::from_xyz(-half_len / 2., -half_len / 2., 0.),
-            Vec3::from_xyz( half_len / 2.,  half_len / 2., 0.),
+            Vec3f32::from_xyz( half_len / 2., -half_len / 2., 0.),
+            Vec3f32::from_xyz(-half_len / 2., -half_len / 2., 0.),
+            Vec3f32::from_xyz( half_len / 2.,  half_len / 2., 0.),
         ],
         shader: shader.clone(),
     };
@@ -309,7 +309,7 @@ pub fn transform_in_place(geos: &mut [Geo], transformation: Mat44) {
                             a[j * 4 + 3] * b[3];
                     }
 
-                    *v = Vec3::from_xyz(vec_val[0], vec_val[1], vec_val[2]);
+                    *v = Vec3f32::from_xyz(vec_val[0], vec_val[1], vec_val[2]);
                 }
             },
             _ => unimplemented!()

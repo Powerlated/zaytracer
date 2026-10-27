@@ -1,4 +1,4 @@
-use crate::raytracer::scalar::math::Bgraf32;
+use crate::raytracer::math::Bgraf32;
 
 #[derive(Clone)]
 pub struct MaterialShader {

@@ -5,7 +5,6 @@ use std::simd::num::{SimdFloat, SimdUint};
 use std::simd::{f32x16, i32x16, simd_swizzle, u8x16, u32x16, u64x16};
 
 pub mod geometry;
-pub mod math;
 pub mod rng;
 pub mod shader;
 
@@ -14,7 +13,7 @@ use rand::{Rng, SeedableRng};
 
 use crate::raytracer::*;
 use crate::raytracer::scalar::geometry::{Geo, Intersection, IntersectionGeo, cube, square, transform_in_place};
-use crate::raytracer::scalar::math::{Mat33, Bgraf32, Vec3, deg_to_rad, hsv_to_rgb, map_range};
+use crate::raytracer::math::{Mat33f32, Bgraf32, Vec3f32, deg_to_rad, hsv_to_rgb, map_range};
 use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
 
@@ -33,7 +32,7 @@ fn random_jitter(prng: &mut Xoshiro128PlusPlus) -> (f32, f32) {
 }
 
 // 3D vector that is evenly distributed on the unit sphere
-fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
+fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3f32 {
     loop {
         // get 64 bits of randomness
         let next = ((prng.next_u32() as u64) << 32) | (prng.next_u32() as u64);
@@ -43,13 +42,13 @@ fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3 {
                                 (next >> 21) & 0x1FFFFF,
                                 (next >> 42) & 0x1FFFFF];
 
-        let mut xyz_float = Vec3::from_xyz(xyz_int[0] as f32,
+        let mut xyz_float = Vec3f32::from_xyz(xyz_int[0] as f32,
                                             xyz_int[1] as f32,
                                             xyz_int[2] as f32);
 
         xyz_float = xyz_float
             .div_scalar(0x1FFFFF as f32)
-            .sub(Vec3::from_xyz(0.5, 0.5, 0.5))
+            .sub(Vec3f32::from_xyz(0.5, 0.5, 0.5))
             .mul_scalar(2.0);
 
         let xyz_magn = xyz_float.magn();
@@ -84,35 +83,35 @@ impl RaytracerScalar {
         };
 
         let mut light = square(1., TriShader::Material(MaterialShader::new_emissive(1., 1., 1., 7.)));
-        transform_in_place(&mut light, Mat33::rotation(90., 0., 0.).translate(0., 0.999, 1.));
+        transform_in_place(&mut light, Mat33f32::rotation(90., 0., 0.).translate(0., 0.999, 1.));
         raytracer.add_geos(&light);
 
         // *CORNELL BOX MENTIONED*
 
         let mut left_wall = square(2., TriShader::Material(MaterialShader::new_diffuse(1., 0., 0.)));
-        transform_in_place(&mut left_wall, Mat33::rotation(  0.,  90.,  0.).translate( 1., 0., 1.25));
+        transform_in_place(&mut left_wall, Mat33f32::rotation(  0.,  90.,  0.).translate( 1., 0., 1.25));
         raytracer.add_geos(&left_wall);
         
         let mut right_wall = square(2., TriShader::Material(MaterialShader::new_diffuse(0., 1., 0.)));
-        transform_in_place(&mut right_wall, Mat33::rotation(  0., -90.,  0.).translate(-1., 0., 1.25));
+        transform_in_place(&mut right_wall, Mat33f32::rotation(  0., -90.,  0.).translate(-1., 0., 1.25));
         raytracer.add_geos(&right_wall);
         
         let mut roof = square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.)));
-        transform_in_place(&mut roof, Mat33::rotation(  90.,  0.,  0.).translate(0.,  1., 1.25));
+        transform_in_place(&mut roof, Mat33f32::rotation(  90.,  0.,  0.).translate(0.,  1., 1.25));
         raytracer.add_geos(&roof);
         
         let mut floor = square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.)));
-        transform_in_place(&mut floor, Mat33::rotation( -90.,  0.,  0.).translate(0., -1., 1.25));
+        transform_in_place(&mut floor, Mat33f32::rotation( -90.,  0.,  0.).translate(0., -1., 1.25));
         raytracer.add_geos(&floor);
 
         // try add_quad(Vec3::from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader::new_emissive(0, 0, 1, 1)}); // light
 
         let mut rear_wall = square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.)));    // rear wall
-        transform_in_place(&mut rear_wall, Mat33::rotation(  0.,  0.,  0.).translate(0.,  0., 2.25));
+        transform_in_place(&mut rear_wall, Mat33f32::rotation(  0.,  0.,  0.).translate(0.,  0., 2.25));
         raytracer.add_geos(&rear_wall);
 
         let mut cube = cube(0.5);
-        transform_in_place(&mut cube, Mat33::rotation(0., -70., 0.).translate(-0.25, -0.75, 1.25));
+        transform_in_place(&mut cube, Mat33f32::rotation(0., -70., 0.).translate(-0.25, -0.75, 1.25));
         raytracer.add_geos(&cube);
 
         raytracer
@@ -171,8 +170,8 @@ impl RaytracerScalar {
                     let row_jittered = (row as f32) + jitter.0;
                     let col_jittered = (col as f32) + jitter.1;
 
-                    let norm_y = map_range(row_jittered, 0., HEIGHT as f32, -1., 1.);
-                    let norm_x = map_range(col_jittered, 0., WIDTH as f32, -1., 1.);
+                    let norm_y = map_range(row_jittered, 0., (HEIGHT - 1) as f32, -1., 1.);
+                    let norm_x = map_range(col_jittered, 0., (WIDTH - 1) as f32, -1., 1.);
 
                     // perform antialiasing accumulate
                     let new_px = self.zaytrace_image_inner(norm_x, norm_y);
@@ -209,15 +208,15 @@ impl RaytracerScalar {
         let x_dir_unnormalized = norm_x * x_outer_bound;
         let y_dir_unnormalized = norm_y * y_outer_bound;
 
-        let ray_pos = Vec3::from_xyz(0., 0., -2.);
-        let ray_dir = Vec3::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.).normalize();
+        let ray_pos = Vec3f32::from_xyz(0., 0., -2.);
+        let ray_dir = Vec3f32::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.).normalize();
 
         return self.zaytrace_ray(None, ray_pos, ray_dir, 0);
     }
 
     // **Inner raytracing loop** :D
     const MAX_BOUNCES: u8 = 16;
-    fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3, ray_dir: Vec3, bounces: u8) -> Bgraf32 {
+    fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3f32, ray_dir: Vec3f32, bounces: u8) -> Bgraf32 {
         if bounces > Self::MAX_BOUNCES  { return Bgraf32::from_rgb_f32(0., 0., 0.); }
 
         let mut closest_inter_t: f32 = 1000.0;
