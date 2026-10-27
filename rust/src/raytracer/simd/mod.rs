@@ -124,8 +124,8 @@ pub struct RaytracerSimd {
     accumulator_buf: Box<[Bgra<F32x16>; ACCUMULATOR_BUF_LEN]>,
     accumulate_steps: u32,
 
-    lanes_active: u32,
-    lanes_computed: u32,
+    pub lanes_active: u64,
+    pub lanes_computed: u64,
 }
 
 impl RaytracerSimd {
@@ -328,7 +328,7 @@ impl RaytracerSimd {
         bounces: u8,
         mut active_mask: u16 // rays that are still 'alive' i.e. still bouncing around
     ) {
-        self.lanes_active += active_mask.count_ones();
+        self.lanes_active += active_mask.count_ones() as u64;
         self.lanes_computed += 16;
 
         unsafe {
@@ -406,7 +406,7 @@ impl RaytracerSimd {
                 ));
             }
 
-            // handle rays that escaped into the background (!hit_mask) as an en emissive hit for material 0
+            // handle rays that escaped into the background (!hit_mask) as an emissive hit for material 0
             let emissive_mask = active_mask & (!hit_mask | material_emission.cmp_ge(1.0));
             
             // **Handle emission**

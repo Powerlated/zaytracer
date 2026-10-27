@@ -291,11 +291,18 @@ impl WgpuState {
             suffix = "".to_string();
         }
 
-        self.arc_window.set_title(format!("Brian Jia - Raytracer {} [{}/{}] {}", 
+        #[cfg(not(feature = "no_simd"))]
+        let lanes_active_pct = self.raytracer.lanes_active * 100 / self.raytracer.lanes_computed;
+        #[cfg(not(feature = "no_simd"))]
+        let lanes_active_pct_formatted = format!("{}%", lanes_active_pct);
+
+        self.arc_window.set_title(format!("Brian Jia - Raytracer {} [{}/{}] {} {} lane util", 
             if cfg!(feature = "no_simd") { "Scalar" } else { "SIMD" },
             accumulated_samples,
             MAX_ACCUMULATE_STEPS,
-            suffix).as_str());
+            suffix,
+            if cfg!(feature = "no_simd") {""} else {lanes_active_pct_formatted.as_str()}
+        ).as_str());
 
         self.queue.write_texture(
             self.texture.as_image_copy(),
