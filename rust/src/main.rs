@@ -1,4 +1,5 @@
 #![feature(portable_simd)]
+#![feature(explicit_tail_calls)]
 
 use std::sync::Arc;
 

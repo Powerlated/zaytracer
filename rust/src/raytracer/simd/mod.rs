@@ -123,12 +123,20 @@ pub struct RaytracerSimd {
     shaders: Vec<MaterialShader>,
     accumulator_buf: Box<[Bgra<F32x16>; ACCUMULATOR_BUF_LEN]>,
     accumulate_steps: u32,
+
+    lanes_active: u32,
+    lanes_computed: u32,
 }
 
 impl RaytracerSimd {
     pub fn from_scalar(raytracer_scalar: RaytracerScalar) -> Self {
         let mut geos = Vec::new();
         let mut shaders = Vec::new();
+
+        // geos[0] is placeholder
+        geos.push(TriSimd { v: [Vec3f32::zero(); 3]});
+        // shaders[0] is backgrond color
+        shaders.push(MaterialShader { color: Bgraf32::from_rgb_f32(0., 0., 0.), emission: 0.0 });
 
         for geo in raytracer_scalar.geos {
             match geo {
@@ -156,6 +164,9 @@ impl RaytracerSimd {
                 .try_into()
                 .unwrap(),
             accumulate_steps: 0,
+
+            lanes_active: 0,
+            lanes_computed: 0,
         }
     }
 
@@ -292,34 +303,52 @@ impl RaytracerSimd {
         let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into())
             .normalize();
 
-        return self.zaytrace_ray(U32x16::from(0xFFFFFFFFu32), ray_pos.splat(), ray_dir, 0, 0xFFFF);
+        let mut ray_color = Bgra::<F32x16>::from_rgb_f32(1.0, 1.0, 1.0);
+
+        self.zaytrace_ray(
+            &mut ray_color,
+            U32x16::from(0),
+            ray_pos.splat(),
+            ray_dir,
+            0,
+            0xFFFF
+        );
+        
+        return ray_color;
     }
 
     // **Inner raytracing loop** :D
     // Traces 16 rays in parallel
     fn zaytrace_ray(
         &mut self,
+        ray_color: &mut Bgra::<F32x16>,
         origin_ids: U32x16,
         ray_pos: Vec3<F32x16>,
         ray_dir: Vec3<F32x16>,
         bounces: u8,
         mut active_mask: u16 // rays that are still 'alive' i.e. still bouncing around
-    ) -> Bgra<F32x16> {
-        // TODO: Bounce limit
-        if bounces > MAX_BOUNCES {
-            return Bgra::<F32x16>::from_rgb_f32(0.0, 0.0, 0.0);
-        }
+    ) {
+        self.lanes_active += active_mask.count_ones();
+        self.lanes_computed += 16;
 
         unsafe {
+            // Bounce limit
+            if bounces > MAX_BOUNCES {
+                ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(0.0));
+                ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
+                ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(0.0));
+                return;
+            }
+
             let mut hit_mask: u16 = 0; // rays, that in this current bounce, have hit a triangle
-            let mut hit_ids = U32x16::splat(0xFFFFFFFF);
+            let mut hit_ids = U32x16::splat(0);
             
             let mut hit_t = F32x16::splat(1000.0);
             let mut hit_n = Vec3::<F32x16>::zero();
             let mut hit_pos = Vec3::<F32x16>::zero();
 
-            assert!(self.geos.len() > 0);
-            for (tri_id, tri) in self.geos.iter().enumerate() {
+            assert!(self.geos.len() > 1);
+            for (tri_id, tri) in self.geos.iter().enumerate().skip(1) {
                 let hit = tri.intersect(ray_pos, ray_dir);
 
                 {
@@ -344,7 +373,7 @@ impl RaytracerSimd {
                 // TODO: alpha
             }
 
-            active_mask &= hit_mask;
+            // active_mask &= hit_mask;
             
             let mut material_color = Bgra::<F32x16>::from_rgb_f32(0., 0., 0.);
             let mut material_emission = F32x16::zero();
@@ -377,9 +406,9 @@ impl RaytracerSimd {
                 ));
             }
 
-            let mut ret = Bgra::<F32x16>::from_rgb_f32(0.0, 0.0, 0.0);
-            let emissive_mask = material_emission.cmp_ge(1.0);
-
+            // handle rays that escaped into the background (!hit_mask) as an en emissive hit for material 0
+            let emissive_mask = active_mask & (!hit_mask | material_emission.cmp_ge(1.0));
+            
             // **Handle emission**
             if emissive_mask != 0 {
                 // Do not bounce if fully emissive
@@ -387,18 +416,19 @@ impl RaytracerSimd {
 
                 if bounces > 0 {
                     for i in 0..3 {
-                        ret.val[i] = F32x16::from(_mm512_mask_mov_ps(ret.val[i].0, emissive_mask, (material_color.val[i] * material_emission).0)) 
+                        ray_color.val[i] = F32x16::from(_mm512_mask_mul_ps(ray_color.val[i].0, emissive_mask, ray_color.val[i].0, (material_color.val[i] * material_emission).0)) 
                     }
                 } else {
                     // To avoid color clipping, don't apply gain to direct rays
                     for i in 0..3 {
-                        ret.val[i] = F32x16::from(_mm512_mask_mov_ps(ret.val[i].0, emissive_mask, material_color.val[i].0)) 
+                        ray_color.val[i] = F32x16::from(_mm512_mask_mul_ps(ray_color.val[i].0, emissive_mask, ray_color.val[i].0, material_color.val[i].0)) 
                     }
                 }
             }
 
             // **Handle diffuse**
-            if emissive_mask != 0xFFFF {
+            // Bounce if there are still rays active 
+            if active_mask != 0 {
                 let mut n = hit_n;
 
                 // If normal is facing the wrong direction, flip sign
@@ -415,26 +445,24 @@ impl RaytracerSimd {
                 let point_on_sphere_shifted = point_on_sphere.add(n);
                 let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize();
 
-                // Bounce if there are still rays active 
-                if active_mask != 0 {
-                    let bounced = self.zaytrace_ray(
-                        hit_ids,
-                        hit_pos,
-                        lambertian_ray_dir,
-                        bounces + 1,
-                        active_mask
-                    );
+                ray_color.val[0].0 = _mm512_mask_mul_ps(ray_color.val[0].0, active_mask, material_color.val[0].0, ray_color.val[0].0);
+                ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
+                ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
+                // ret.val[3].0 = _mm512_mask_mul_ps(ret.val[3].0, active_mask, material_color.val[3].0, bounced.val[3].0);
 
-                    ret.val[0].0 = _mm512_mask_mul_ps(ret.val[0].0, active_mask, material_color.val[0].0, bounced.val[0].0);
-                    ret.val[1].0 = _mm512_mask_mul_ps(ret.val[1].0, active_mask, material_color.val[1].0, bounced.val[1].0);
-                    ret.val[2].0 = _mm512_mask_mul_ps(ret.val[2].0, active_mask, material_color.val[2].0, bounced.val[2].0);
-                    // ret.val[3].0 = _mm512_mask_mul_ps(ret.val[3].0, active_mask, material_color.val[3].0, bounced.val[3].0);
+                // ret.val[0].0 = _mm512_mask_mov_ps(ret.val[0].0, active_mask, _mm512_abs_ps(n.val[0].0));
+                // ret.val[1].0 = _mm512_mask_mov_ps(ret.val[1].0, active_mask, _mm512_abs_ps(n.val[1].0));
+                // ret.val[2].0 = _mm512_mask_mov_ps(ret.val[2].0, active_mask, _mm512_abs_ps(n.val[2].0));
+                // ret.val[3].0 = _mm512_mask_mov_ps(ret.val[3].0, active_mask, _mm512_set1_ps(1.0));
 
-                    // ret.val[0].0 = _mm512_mask_mov_ps(ret.val[0].0, active_mask, _mm512_abs_ps(n.val[0].0));
-                    // ret.val[1].0 = _mm512_mask_mov_ps(ret.val[1].0, active_mask, _mm512_abs_ps(n.val[1].0));
-                    // ret.val[2].0 = _mm512_mask_mov_ps(ret.val[2].0, active_mask, _mm512_abs_ps(n.val[2].0));
-                    // ret.val[3].0 = _mm512_mask_mov_ps(ret.val[3].0, active_mask, _mm512_set1_ps(1.0));
-                }
+                become self.zaytrace_ray(
+                    ray_color,
+                    hit_ids,
+                    hit_pos,
+                    lambertian_ray_dir,
+                    bounces + 1,
+                    active_mask
+                );
             }
 
             /*
@@ -468,8 +496,6 @@ impl RaytracerSimd {
                 ));
             }
             */
-
-            return ret;
         }
     }
 }
