@@ -33,7 +33,9 @@ struct WgpuState {
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
 
-    // raytracer: raytracer::scalar::RaytracerScalar,
+    #[cfg(feature = "no_simd")]
+    raytracer: raytracer::scalar::RaytracerScalar,
+    #[cfg(not(feature = "no_simd"))]
     raytracer: raytracer::simd::RaytracerSimd,
 
     raytrace_start_time: Option<std::time::Instant>,
@@ -205,7 +207,9 @@ impl WgpuState {
             texture,
             texture_bind_group,
 
-            // raytracer: RaytracerScalar::new(),
+            #[cfg(feature = "no_simd")]
+            raytracer: RaytracerScalar::new(),
+            #[cfg(not(feature = "no_simd"))]
             raytracer: RaytracerSimd::from_scalar(RaytracerScalar::new()),
 
             raytrace_start_time: None,
@@ -286,7 +290,11 @@ impl WgpuState {
             suffix = "".to_string();
         }
 
-        self.arc_window.set_title(format!("Brian Jia - Raytracer [{}/{}] {}", accumulated_samples, MAX_ACCUMULATE_STEPS, suffix).as_str());
+        self.arc_window.set_title(format!("Brian Jia - Raytracer {} [{}/{}] {}", 
+            if cfg!(feature = "no_simd") { "Scalar" } else { "SIMD" },
+            accumulated_samples,
+            MAX_ACCUMULATE_STEPS,
+            suffix).as_str());
 
         self.queue.write_texture(
             self.texture.as_image_copy(),
