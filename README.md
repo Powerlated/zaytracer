@@ -13,9 +13,10 @@ Timings are recorded on a Dell Inspiron 16 5645 laptop with an AMD Ryzen 7 8840U
 
 The scene rendered for timings:
 
-![Scene](image.png)
+![Scene](assets/screenshot-8ab06df.png)
 
 | Commit Hash | Runtime  | Millions of cycles to trace one step | Notes                                                               |
 | ----------- | -------- | ------------------------------------ | ------------------------------------------------------------------- |
 | 8ab06df     | 32.846 s | 1226                                 | No BVH, no SoA, autovectorization enabled with target-cpu-x86-64-v4 |
 | 8ab06df     | N/A      | 1351                                 | Same as above, but on target-cpu-x86-64                             |
+| 88b3b85     | N/A      | 474                                  | Initial SIMD attempt                                                |
