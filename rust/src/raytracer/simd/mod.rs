@@ -405,7 +405,6 @@ impl RaytracerSimd {
             U32x16::from(0),
             ray_pos.splat(),
             ray_dir,
-            0,
             0xFFFF,
             row,
             col
@@ -420,164 +419,157 @@ impl RaytracerSimd {
     fn zaytrace_ray(
         &mut self,
         ray_color: &mut Bgra::<F32x16>,
-        origin_id: U32x16,
-        ray_pos: Vec3<F32x16>,
-        ray_dir: Vec3<F32x16>,
-        bounces: u8,
+        mut origin_id: U32x16,
+        mut ray_pos: Vec3<F32x16>,
+        mut ray_dir: Vec3<F32x16>,
         mut active_mask: u16, // rays that are still 'alive' i.e. still bouncing around
         row: u32,
         col: U32x16,
     ) {
         unsafe {
-            // Bounce limit
-            if bounces > MAX_BOUNCES {
-                ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(0.0));
-                ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
-                ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(0.0));
-                return;
-            }
+            for bounces in 0..MAX_BOUNCES {
+                self.lanes_active += active_mask.count_ones() as u64;
+                self.lanes_computed += 16;
 
-            self.lanes_active += active_mask.count_ones() as u64;
-            self.lanes_computed += 16;
+                let mut hit_mask: u16 = 0; // rays, that in this current bounce, have hit a triangle
+                let mut hit_ids = U32x16::splat(0);
+                
+                let mut hit_t = F32x16::splat(1000.0);
+                let mut hit_pos = Vec3::<F32x16>::zero();
 
-            let mut hit_mask: u16 = 0; // rays, that in this current bounce, have hit a triangle
-            let mut hit_ids = U32x16::splat(0);
-            
-            let mut hit_t = F32x16::splat(1000.0);
-            let mut hit_pos = Vec3::<F32x16>::zero();
+                assert!(self.geos.len() > 1);
+                for (tri_id, tri) in self.geos.iter().enumerate().skip(1) {
+                    let hit = tri.intersect(ray_pos, ray_dir);
 
-            assert!(self.geos.len() > 1);
-            for (tri_id, tri) in self.geos.iter().enumerate().skip(1) {
-                let hit = tri.intersect(ray_pos, ray_dir);
+                    {
+                        let mut write_mask = hit.hitmask & hit.t.cmp_lt(hit_t);
+                        
+                        // Prevent rays from hitting their origin triangle
+                        write_mask &= origin_id.cmp_neq(tri_id as u32);
 
+                        // Update the hit_<x> variables for rays we've found a closer intersection for this iteration
+                        hit_t.0 = _mm512_mask_mov_ps(hit_t.0, write_mask, hit.t.0);
+                        hit_pos.val[0].0 = _mm512_mask_mov_ps(hit_pos.val[0].0, write_mask, hit.p.val[0].0); 
+                        hit_pos.val[1].0 = _mm512_mask_mov_ps(hit_pos.val[1].0, write_mask, hit.p.val[1].0); 
+                        hit_pos.val[2].0 = _mm512_mask_mov_ps(hit_pos.val[2].0, write_mask, hit.p.val[2].0); 
+
+                        hit_mask |= write_mask;
+                        hit_ids = U32x16::from(_mm512_mask_mov_epi32(hit_ids.0, write_mask, _mm512_set1_epi32(tri_id as i32)));
+                    }
+
+                    // TODO: alpha
+                }
+                
+                // **Look up surface data for rays: Material color, emissivity, and triangle normal vector **
+                let material_color: Bgra<F32x16>;
+                let material_emission: F32x16;
+                let hit_n: Vec3<F32x16>;
                 {
-                    let mut write_mask = hit.hitmask & hit.t.cmp_lt(hit_t);
+                    let tri_size = U32x16::splat(size_of::<TriSimd>() as u32);
+                    let tri_offset = U32x16::from(_mm512_mullo_epi32(hit_ids.0, tri_size.0));
+
+                    // Look up color. Blue, green, and then red
+                    material_color = Bgra::<F32x16> { val: std::array::from_fn(|i| {
+                        F32x16::from(_mm512_i32gather_ps::<1>(
+                            tri_offset.0,
+                            &self.geos[0].shader.color.val[i] as *const f32,
+                        ))
+                    })};
                     
-                    // Prevent rays from hitting their origin triangle
-                    write_mask &= origin_id.cmp_neq(tri_id as u32);
+                    // Look up emission.
+                    material_emission = F32x16::from(_mm512_i32gather_ps::<1>(
+                        tri_offset.0,
+                        &self.geos[0].shader.emission as *const f32,
+                    ));
 
-                    // Update the hit_<x> variables for rays we've found a closer intersection for this iteration
-                    hit_t.0 = _mm512_mask_mov_ps(hit_t.0, write_mask, hit.t.0);
-                    hit_pos.val[0].0 = _mm512_mask_mov_ps(hit_pos.val[0].0, write_mask, hit.p.val[0].0); 
-                    hit_pos.val[1].0 = _mm512_mask_mov_ps(hit_pos.val[1].0, write_mask, hit.p.val[1].0); 
-                    hit_pos.val[2].0 = _mm512_mask_mov_ps(hit_pos.val[2].0, write_mask, hit.p.val[2].0); 
-
-                    hit_mask |= write_mask;
-                    hit_ids = U32x16::from(_mm512_mask_mov_epi32(hit_ids.0, write_mask, _mm512_set1_epi32(tri_id as i32)));
+                    // Look up triangle normal
+                    hit_n = Vec3::<F32x16> { val: std::array::from_fn(|i| {
+                        F32x16::from(_mm512_i32gather_ps::<1>(
+                            tri_offset.0,
+                            &self.geos[0].n.val[i] as *const f32,
+                        ))
+                    })};
                 }
 
-                // TODO: alpha
-            }
-            
-            // **Look up surface data for rays: Material color, emissivity, and triangle normal vector **
-            let material_color: Bgra<F32x16>;
-            let material_emission: F32x16;
-            let hit_n: Vec3<F32x16>;
-            {
-                let tri_size = U32x16::splat(size_of::<TriSimd>() as u32);
-                let tri_offset = U32x16::from(_mm512_mullo_epi32(hit_ids.0, tri_size.0));
-
-                // Look up color. Blue, green, and then red
-                material_color = Bgra::<F32x16> { val: std::array::from_fn(|i| {
-                    F32x16::from(_mm512_i32gather_ps::<1>(
-                        tri_offset.0,
-                        &self.geos[0].shader.color.val[i] as *const f32,
-                    ))
-                })};
+                // TODO: support non-fully emissive
+                // handle rays that escaped into the background (!hit_mask) as an emissive hit for material 0
+                let emissive_mask = active_mask & (!hit_mask | material_emission.cmp_ge(1.0));
                 
-                // Look up emission.
-                material_emission = F32x16::from(_mm512_i32gather_ps::<1>(
-                    tri_offset.0,
-                    &self.geos[0].shader.emission as *const f32,
-                ));
+                // **Handle emission**
+                if emissive_mask != 0 {
+                    // Do not bounce if fully emissive
+                    active_mask &= !emissive_mask;
 
-                // Look up triangle normal
-                hit_n = Vec3::<F32x16> { val: std::array::from_fn(|i| {
-                    F32x16::from(_mm512_i32gather_ps::<1>(
-                        tri_offset.0,
-                        &self.geos[0].n.val[i] as *const f32,
-                    ))
-                })};
-            }
-
-            // TODO: support non-fully emissive
-            // handle rays that escaped into the background (!hit_mask) as an emissive hit for material 0
-            let emissive_mask = active_mask & (!hit_mask | material_emission.cmp_ge(1.0));
-            
-            // **Handle emission**
-            if emissive_mask != 0 {
-                // Do not bounce if fully emissive
-                active_mask &= !emissive_mask;
-
-                if bounces > 0 {
-                    for i in 0..3 {
-                        ray_color.val[i] = F32x16::from(_mm512_mask_mul_ps(ray_color.val[i].0, emissive_mask, ray_color.val[i].0, (material_color.val[i] * material_emission).0)) 
+                    if bounces > 0 {
+                        for i in 0..3 {
+                            ray_color.val[i] = F32x16::from(_mm512_mask_mul_ps(ray_color.val[i].0, emissive_mask, ray_color.val[i].0, (material_color.val[i] * material_emission).0)) 
+                        }
+                    } else {
+                        // To avoid color clipping, don't apply gain to direct rays
+                        for i in 0..3 {
+                            ray_color.val[i] = F32x16::from(_mm512_mask_mul_ps(ray_color.val[i].0, emissive_mask, ray_color.val[i].0, material_color.val[i].0)) 
+                        }
                     }
+                }
+
+                // **Handle diffuse**
+                // Bounce if there are still rays active 
+                if active_mask != 0 {
+                    let mut n = hit_n;
+
+                    // If normal is facing the wrong direction, flip sign
+                    {
+                        let normal_facing_wrong_direction_mask = n.dot(ray_dir).cmp_gt(0.0);
+                        // Evil floating point bit level magic hacking??????
+                        let sign_bit: __m512 = std::mem::transmute(_mm512_set1_epi32(0x80000000u32 as i32));
+                        n.val[0].0 = _mm512_mask_xor_ps(n.val[0].0, normal_facing_wrong_direction_mask, n.val[0].0, sign_bit);
+                        n.val[1].0 = _mm512_mask_xor_ps(n.val[1].0, normal_facing_wrong_direction_mask, n.val[1].0, sign_bit);
+                        n.val[2].0 = _mm512_mask_xor_ps(n.val[2].0, normal_facing_wrong_direction_mask, n.val[2].0, sign_bit);
+                    }
+
+                    let point_on_sphere = hit_pos.add(self.random_unit_vector_gen.next());
+                    let point_on_sphere_shifted = point_on_sphere.add(n);
+                    let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize();
+
+                    ray_color.val[0].0 = _mm512_mask_mul_ps(ray_color.val[0].0, active_mask, material_color.val[0].0, ray_color.val[0].0);
+                    ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
+                    ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
+
+                    // Write restore data for rays that will bounce
+                    // {
+                    //     let bounce_dir = lambertian_ray_dir;
+
+                    //     let res = &mut self.ray_restore_data;
+                    //     let i = res.entries as usize;
+
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, active_mask, ray_color.val[0].0);
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, active_mask, ray_color.val[1].0);
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, active_mask, ray_color.val[2].0);
+                    //     _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, bounce_dir.val[0].0);
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, bounce_dir.val[1].0);
+                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, bounce_dir.val[2].0);
+                    //     _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, _mm512_set1_epi32(row as i32));
+                    //     _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
+
+                    //     res.entries += active_mask.count_ones() as u32;
+                    // }
+
+                    origin_id = hit_ids;
+                    ray_pos = hit_pos;
+                    ray_dir = lambertian_ray_dir;
                 } else {
-                    // To avoid color clipping, don't apply gain to direct rays
-                    for i in 0..3 {
-                        ray_color.val[i] = F32x16::from(_mm512_mask_mul_ps(ray_color.val[i].0, emissive_mask, ray_color.val[i].0, material_color.val[i].0)) 
-                    }
+                    // no rays active, break
+                    break;
                 }
             }
 
-            // **Handle diffuse**
-            // Bounce if there are still rays active 
-            if active_mask != 0 {
-                let mut n = hit_n;
-
-                // If normal is facing the wrong direction, flip sign
-                {
-                    let normal_facing_wrong_direction_mask = n.dot(ray_dir).cmp_gt(0.0);
-                    // Evil floating point bit level magic hacking??????
-                    let sign_bit: __m512 = std::mem::transmute(_mm512_set1_epi32(0x80000000u32 as i32));
-                    n.val[0].0 = _mm512_mask_xor_ps(n.val[0].0, normal_facing_wrong_direction_mask, n.val[0].0, sign_bit);
-                    n.val[1].0 = _mm512_mask_xor_ps(n.val[1].0, normal_facing_wrong_direction_mask, n.val[1].0, sign_bit);
-                    n.val[2].0 = _mm512_mask_xor_ps(n.val[2].0, normal_facing_wrong_direction_mask, n.val[2].0, sign_bit);
-                }
-
-                let point_on_sphere = hit_pos.add(self.random_unit_vector_gen.next());
-                let point_on_sphere_shifted = point_on_sphere.add(n);
-                let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize();
-
-                ray_color.val[0].0 = _mm512_mask_mul_ps(ray_color.val[0].0, active_mask, material_color.val[0].0, ray_color.val[0].0);
-                ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
-                ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
-
-                // Write restore data for rays that will bounce
-                // {
-                //     let bounce_dir = lambertian_ray_dir;
-
-                //     let res = &mut self.ray_restore_data;
-                //     let i = res.entries as usize;
-
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, active_mask, ray_color.val[0].0);
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, active_mask, ray_color.val[1].0);
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, active_mask, ray_color.val[2].0);
-                //     _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, bounce_dir.val[0].0);
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, bounce_dir.val[1].0);
-                //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, bounce_dir.val[2].0);
-                //     _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, _mm512_set1_epi32(row as i32));
-                //     _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
-
-                //     res.entries += active_mask.count_ones() as u32;
-                // }
-                
-                become self.zaytrace_ray(
-                    ray_color,
-                    hit_ids,
-                    hit_pos,
-                    lambertian_ray_dir,
-                    bounces + 1,
-                    active_mask,
-                    row,
-                    col
-                );
-            }
+            ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(0.0));
+            ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
+            ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(0.0));
         }
     }
 }
