@@ -401,12 +401,12 @@ impl RaytracerSimd {
                     let norm_y = map_range(row_jittered, 0.0, HEIGHT as f32 - 1.0, -1.0, 1.0);
                     let norm_x = map_range(col_jittered, 0.0, WIDTH as f32 - 1.0, -1.0, 1.0);
 
-                    self.zaytrace_primary_rays(norm_x, norm_y, row as u32, col);
+                    self.zaytrace_primary_rays(norm_x, norm_y, row as u32, col, col_stepped as u32);
                 }
             }
 
             unsafe {
-                // **Accumulate intermediate buffer into accumulator buffer and zero intermediate buffer**
+                // **Accumulate intermediate buffer into accumulator buffer**
                 for i in (0..INTERMEDIATE_BUF_LEN).step_by(16) {
                     let b_inter_ptr = self.intermediate_buf.val[0].as_mut_ptr().add(i);
                     let g_inter_ptr = self.intermediate_buf.val[1].as_mut_ptr().add(i);
@@ -418,12 +418,6 @@ impl RaytracerSimd {
                     _mm512_store_ps(b_acc_ptr, _mm512_add_ps(_mm512_load_ps(b_inter_ptr), _mm512_load_ps(b_acc_ptr)));
                     _mm512_store_ps(g_acc_ptr, _mm512_add_ps(_mm512_load_ps(g_inter_ptr), _mm512_load_ps(g_acc_ptr)));
                     _mm512_store_ps(r_acc_ptr, _mm512_add_ps(_mm512_load_ps(r_inter_ptr), _mm512_load_ps(r_acc_ptr)));
-
-                    // Zero intermediate buffer
-                    let zero = _mm512_set1_ps(0.);
-                    _mm512_store_ps(b_inter_ptr, zero);
-                    _mm512_store_ps(g_inter_ptr, zero);
-                    _mm512_store_ps(r_inter_ptr, zero);
                 }
             }
 
@@ -439,7 +433,7 @@ impl RaytracerSimd {
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
     #[inline]
-    fn zaytrace_primary_rays(&mut self, norm_x: F32x16, flipped_norm_y: F32x16, row: u32, col: U32x16) {
+    fn zaytrace_primary_rays(&mut self, norm_x: F32x16, flipped_norm_y: F32x16, row: u32, col: U32x16, col_stepped: u32) {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
 
@@ -466,19 +460,23 @@ impl RaytracerSimd {
             0xFFFF,
             0,
             row,
-            col
+            col,
         );
 
         // write primary rays to intermediate buffer
         unsafe {
-            // TODO optimize to use write instead of scatter
             // operating on planar format here, 4 bytes per pixel
-            let offset_row = _mm512_set1_epi32((row * WIDTH as u32) as i32); 
-            let offset = _mm512_add_epi32(offset_row, col.0);
-            _mm512_i32scatter_ps::<4>(self.intermediate_buf.val[0].as_mut_ptr(), offset, ray_color.val[0].0);
-            _mm512_i32scatter_ps::<4>(self.intermediate_buf.val[1].as_mut_ptr(), offset, ray_color.val[1].0);
-            _mm512_i32scatter_ps::<4>(self.intermediate_buf.val[2].as_mut_ptr(), offset, ray_color.val[2].0);
+            let offset_row = row as usize * WIDTH; 
+            let offset = offset_row + col_stepped as usize;
+            _mm512_store_ps(self.intermediate_buf.val[0].as_mut_ptr().add(offset), ray_color.val[0].0);
+            _mm512_store_ps(self.intermediate_buf.val[1].as_mut_ptr().add(offset), ray_color.val[1].0);
+            _mm512_store_ps(self.intermediate_buf.val[2].as_mut_ptr().add(offset), ray_color.val[2].0);
         }
+    }
+
+    #[inline]
+    fn zaytrace_secondary_rays(&mut self) {
+
     }
 
     // **Inner raytracing loop** :D
