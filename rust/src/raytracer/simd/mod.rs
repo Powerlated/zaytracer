@@ -161,7 +161,7 @@ fn vecboxslice<const L: usize, T: Clone + std::fmt::Debug>(val: T) -> Box<[T; L]
 
 #[repr(align(64))]
 struct RayRestoreData {
-    ray_color: Bgra<Box<[f32; RAY_RESTORE_DATA_LEN]>>,
+    // ray_color: Bgra<Box<[f32; RAY_RESTORE_DATA_LEN]>>,
     origin_id: Box<[u32; RAY_RESTORE_DATA_LEN]>,
     ray_pos: Vec3<Box<[f32; RAY_RESTORE_DATA_LEN]>>, 
     ray_dir: Vec3<Box<[f32; RAY_RESTORE_DATA_LEN]>>, 
@@ -174,14 +174,14 @@ struct RayRestoreData {
 impl RayRestoreData {
     fn zero() -> Self {
         Self {
-            ray_color: Bgra::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
-                val: [
-                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
-                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
-                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
-                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
-                ],
-            },
+            // ray_color: Bgra::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
+            //     val: [
+            //         vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+            //         vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+            //         vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+            //         vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+            //     ],
+            // },
             origin_id: vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0),
             ray_pos: Vec3::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
                 val: [
@@ -405,6 +405,8 @@ impl RaytracerSimd {
                 }
             }
 
+            self.zaytrace_secondary_rays();
+
             unsafe {
                 // **Accumulate intermediate buffer into accumulator buffer**
                 for i in (0..INTERMEDIATE_BUF_LEN).step_by(16) {
@@ -453,14 +455,16 @@ impl RaytracerSimd {
         let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into())
             .normalize();
 
+        let mut active_mask = 0xFFFF;
         let ray_color = self.zaytrace_bounce(
             U32x16::from(0),
             ray_pos.splat(),
             ray_dir,
-            0xFFFF,
+            &mut active_mask,
             0,
-            row,
+            U32x16::splat(row),
             col,
+            true
         );
 
         // write primary rays to intermediate buffer
@@ -476,7 +480,64 @@ impl RaytracerSimd {
 
     #[inline]
     fn zaytrace_secondary_rays(&mut self) {
+        unsafe {
+            while self.ray_restore_data.entries >= 16 {
+                self.ray_restore_data.entries -= 16;
+                let res = &self.ray_restore_data;
+                let i = self.ray_restore_data.entries as usize;
+                // let ray_color_b = _mm512_loadu_ps(&res.ray_color.val[0][i] as *const f32);
+                // let ray_color_g = _mm512_loadu_ps(&res.ray_color.val[1][i] as *const f32);
+                // let ray_color_r = _mm512_loadu_ps(&res.ray_color.val[2][i] as *const f32);
+                let origin_id = _mm512_loadu_epi32(&res.origin_id[i] as *const u32 as *const i32);
+                let ray_pos_x = _mm512_loadu_ps(&res.ray_pos.val[0][i] as *const f32);
+                let ray_pos_y = _mm512_loadu_ps(&res.ray_pos.val[1][i] as *const f32);
+                let ray_pos_z = _mm512_loadu_ps(&res.ray_pos.val[2][i] as *const f32);
+                let ray_dir_x = _mm512_loadu_ps(&res.ray_dir.val[0][i] as *const f32);
+                let ray_dir_y = _mm512_loadu_ps(&res.ray_dir.val[1][i] as *const f32);
+                let ray_dir_z = _mm512_loadu_ps(&res.ray_dir.val[2][i] as *const f32);
+                let row = _mm512_loadu_epi32(&res.row[i] as *const u32 as *const i32);
+                let col = _mm512_loadu_epi32(&res.col[i] as *const u32 as *const i32);
 
+                let mut active_mask = 0xFFFF;
+                let secondary = self.zaytrace_bounce(
+                    U32x16::from(origin_id),
+                    Vec3::<F32x16>::from_xyz(
+                        F32x16::from(ray_pos_x),
+                        F32x16::from(ray_pos_y),
+                        F32x16::from(ray_pos_z),
+                    ),
+                    Vec3::<F32x16>::from_xyz(
+                        F32x16::from(ray_dir_x),
+                        F32x16::from(ray_dir_y),
+                        F32x16::from(ray_dir_z),
+                    ),
+                    &mut active_mask,
+                    1,
+                    U32x16::from(row),
+                    U32x16::from(col),
+                    false);
+
+                // write secondary rays to intermediate buffer
+                // operating on planar format here, 4 bytes per pixel
+                let offset = _mm512_add_epi32(_mm512_mullo_epi32(row, _mm512_set1_epi32(WIDTH as i32)), col);
+                let mut b =_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[0].as_ptr());
+                let mut g =_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[1].as_ptr());
+                let mut r =_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[2].as_ptr());
+                b = _mm512_mul_ps(b, secondary.val[0].0);
+                g = _mm512_mul_ps(g, secondary.val[1].0);
+                r = _mm512_mul_ps(r, secondary.val[2].0);
+                let black = _mm512_set1_ps(0.);
+                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[0].as_mut_ptr(), active_mask, offset, b);
+                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[1].as_mut_ptr(), active_mask, offset, g);
+                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[2].as_mut_ptr(), active_mask, offset, r);
+                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[0].as_mut_ptr(), !active_mask, offset, black);
+                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[1].as_mut_ptr(), !active_mask, offset, black);
+                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[2].as_mut_ptr(), !active_mask, offset, black);
+            }
+
+            // TODO
+            println!("{} secondary rays remain, TODO", self.ray_restore_data.entries);
+        }
     }
 
     // **Inner raytracing loop** :D
@@ -487,10 +548,11 @@ impl RaytracerSimd {
         mut origin_id: U32x16,
         mut ray_pos: Vec3<F32x16>,
         mut ray_dir: Vec3<F32x16>,
-        mut active_mask: u16, // rays that are still 'alive' i.e. still bouncing around
+        active_mask: &mut u16, // rays that are still 'alive' i.e. still bouncing around
         mut bounces: u8,
-        row: u32,
+        row: U32x16,
         col: U32x16,
+        emit_secondary: bool,
     ) -> Bgra::<F32x16> {
         let mut ray_color = Bgra::<F32x16>::from_rgb_f32(1.0, 1.0, 1.0);
 
@@ -562,12 +624,12 @@ impl RaytracerSimd {
 
                 // TODO: support non-fully emissive
                 // handle rays that escaped into the background (!hit_mask) as an emissive hit for material 0
-                let emissive_mask = active_mask & (!hit_mask | material_emission.cmp_ge(1.0));
+                let emissive_mask = *active_mask & (!hit_mask | material_emission.cmp_ge(1.0));
                 
                 // **Handle emission**
                 if emissive_mask != 0 {
                     // Do not bounce if fully emissive
-                    active_mask &= !emissive_mask;
+                    *active_mask &= !emissive_mask;
 
                     if bounces > 0 {
                         for i in 0..3 {
@@ -583,7 +645,7 @@ impl RaytracerSimd {
 
                 // **Handle diffuse**
                 // Bounce if there are still rays active 
-                if active_mask != 0 {
+                if *active_mask != 0 {
                     let mut n = hit_n;
 
                     // If normal is facing the wrong direction, flip sign
@@ -600,37 +662,38 @@ impl RaytracerSimd {
                     let point_on_sphere_shifted = point_on_sphere.add(n);
                     let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize();
 
-                    ray_color.val[0].0 = _mm512_mask_mul_ps(ray_color.val[0].0, active_mask, material_color.val[0].0, ray_color.val[0].0);
-                    ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
-                    ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
+                    ray_color.val[0].0 = _mm512_mask_mul_ps(ray_color.val[0].0, *active_mask, material_color.val[0].0, ray_color.val[0].0);
+                    ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, *active_mask, material_color.val[1].0, ray_color.val[1].0);
+                    ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, *active_mask, material_color.val[2].0, ray_color.val[2].0);
 
-                    if active_mask != 0xFFFF {
-                        // If ray vector becomes sparse, write restore data for next pass 
-                        let bounce_dir = lambertian_ray_dir;
+                    if *active_mask != 0xFFFF {
+                        if emit_secondary {
+                            // If ray vector becomes sparse, write restore data for next pass 
+                            let bounce_dir = lambertian_ray_dir;
 
-                        let res = &mut self.ray_restore_data;
-                        let i = res.entries as usize;
+                            let res = &mut self.ray_restore_data;
+                            let i = res.entries as usize;
 
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, active_mask, ray_color.val[0].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, active_mask, ray_color.val[1].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, active_mask, ray_color.val[2].0);
-                        _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, bounce_dir.val[0].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, bounce_dir.val[1].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, bounce_dir.val[2].0);
-                        _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, _mm512_set1_epi32(row as i32));
-                        _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
+                            _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, *active_mask, origin_id.0);
+                            // _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, *active_mask, ray_color.val[0].0);
+                            // _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, *active_mask, ray_color.val[1].0);
+                            // _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, *active_mask, ray_color.val[2].0);
+                            _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, *active_mask, ray_pos.val[0].0);
+                            _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, *active_mask, ray_pos.val[1].0);
+                            _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, *active_mask, ray_pos.val[2].0);
+                            _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, *active_mask, bounce_dir.val[0].0);
+                            _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, *active_mask, bounce_dir.val[1].0);
+                            _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, *active_mask, bounce_dir.val[2].0);
+                            _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, *active_mask, row.0);
+                            _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, *active_mask, col.0);
 
-                        // res.entries += active_mask.count_ones() as u32;
+                            res.entries += active_mask.count_ones() as u32;
 
-                        // for debugging - set all preserved rays to magenta
-                        // ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(1.0));
-                        // ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
-                        // ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(1.0));
-
+                            // for debugging - set all preserved rays to magenta
+                            // ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, *active_mask, _mm512_set1_ps(1.0));
+                            // ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, *active_mask, _mm512_set1_ps(0.0));
+                            // ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, *active_mask, _mm512_set1_ps(1.0));
+                        }
                         return ray_color;
                     } else {
                         // If ray vector is not sparse, bounce immediately 
@@ -642,9 +705,9 @@ impl RaytracerSimd {
 
                         if bounces == MAX_BOUNCES {
                             // If at this point, the ray still has not hit a light (still active), set the ray to black
-                            ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(0.0));
-                            ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
-                            ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(0.0));
+                            ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, *active_mask, _mm512_set1_ps(0.0));
+                            ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, *active_mask, _mm512_set1_ps(0.0));
+                            ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, *active_mask, _mm512_set1_ps(0.0));
 
                             break ray_color;
                         }
