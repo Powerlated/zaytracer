@@ -14,6 +14,7 @@ use winit::window::{Window, WindowButtons, WindowId};
 
 use crate::raytracer::{HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
 use crate::raytracer::simd::*;
+use ::raytracer::GIT_HASH_AND_DIRTY_STR;
 
 mod raytracer;
 
@@ -296,12 +297,13 @@ impl WgpuState {
         #[cfg(not(feature = "no_simd"))]
         let lanes_active_pct_formatted = format!("{}%", lanes_active_pct);
 
-        self.arc_window.set_title(format!("Brian Jia - Raytracer {} [{}/{}] {} {} lane util", 
+        self.arc_window.set_title(format!("Brian Jia - Raytracer {} [{}/{}] {} {} lane util {}", 
             if cfg!(feature = "no_simd") { "Scalar" } else { "SIMD" },
             accumulated_samples,
             MAX_ACCUMULATE_STEPS,
             suffix,
-            if cfg!(feature = "no_simd") {""} else {lanes_active_pct_formatted.as_str()}
+            if cfg!(feature = "no_simd") {""} else {lanes_active_pct_formatted.as_str()},
+            GIT_HASH_AND_DIRTY_STR
         ).as_str());
 
         self.queue.write_texture(
