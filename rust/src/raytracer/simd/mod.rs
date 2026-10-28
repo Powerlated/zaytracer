@@ -28,9 +28,11 @@ use crate::raytracer::*;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
+#[inline]
 fn random_jitter(prng: &mut SFC32Simd) -> (F32x16, F32x16) {
     /// `int`: lower 23 bits must be I.I.D.
     /// Returns random float in [-0.5, 0.5].
+    #[inline]
     fn float_hack_negpoint5_to_point5(int: __m512i) -> __m512 {
         unsafe {
             let mantissa_mask = _mm512_set1_epi32(0b11111111111111111111111);
@@ -72,6 +74,7 @@ impl RandomUnitVectorGenerator {
     }
 
     // 3D unit vector that is evenly distributed on the unit sphere
+    #[inline]
     fn next(&mut self) -> Vec3<F32x16> {
         loop {
             // get three random values - 96 bits of randomness per vector
@@ -89,6 +92,7 @@ impl RandomUnitVectorGenerator {
             
             /// `int`: lower 23 bits must be I.I.D.
             /// Returns random float in [-1, 1].
+            #[inline]
             fn float_hack_neg1_to_1(int: __m512i) -> __m512 {
                 unsafe {
                     let mantissa_mask = _mm512_set1_epi32(0b11111111111111111111111);
