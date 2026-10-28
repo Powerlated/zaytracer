@@ -74,8 +74,8 @@ impl RandomUnitVectorGenerator {
             // map [0, 0xFFFFFFFF] to [-1, 1]
             let xyz_float = xyz_float
                 .div_scalar(0xFFFFFFFFu32 as f32)
-                .sub(Vec3::<F32x16>::from_xyz(0.5.into(), 0.5.into(), 0.5.into()))
-                .mul_scalar(2.0);
+                .mul_scalar_add(2.0,
+                Vec3::<F32x16>::from_xyz((-0.5).into(), (-0.5).into(), (-0.5).into()));
 
             let xyz_magn = xyz_float.magn();
             // vectors with magnitude less than 1 and greater than 0.01 are valid
@@ -332,10 +332,7 @@ impl RaytracerSimd {
             // **Then, update the output buffer while dithering it.**
             self.accumulate_steps += 1;
             self.update_and_dither_output_buffer(buf);
-
-            println!("Bounce rays stored: {}", self.ray_restore_data.entries);
         }
-
 
         return self.accumulate_steps;
     }
@@ -511,27 +508,38 @@ impl RaytracerSimd {
                 ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
 
                 // Write restore data for rays that will bounce
-                {
-                    let bounce_dir = lambertian_ray_dir;
+                // {
+                //     let bounce_dir = lambertian_ray_dir;
 
-                    let res = &mut self.ray_restore_data;
-                    let i = res.entries as usize;
+                //     let res = &mut self.ray_restore_data;
+                //     let i = res.entries as usize;
 
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, active_mask, ray_color.val[0].0);
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, active_mask, ray_color.val[1].0);
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, active_mask, ray_color.val[2].0);
-                    _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, bounce_dir.val[0].0);
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, bounce_dir.val[1].0);
-                    _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, bounce_dir.val[2].0);
-                    _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, _mm512_set1_epi32(row as i32));
-                    _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, active_mask, ray_color.val[0].0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, active_mask, ray_color.val[1].0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, active_mask, ray_color.val[2].0);
+                //     _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, bounce_dir.val[0].0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, bounce_dir.val[1].0);
+                //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, bounce_dir.val[2].0);
+                //     _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, _mm512_set1_epi32(row as i32));
+                //     _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
 
-                    res.entries += active_mask.count_ones() as u32;
-                }
+                //     res.entries += active_mask.count_ones() as u32;
+                // }
+                
+                become self.zaytrace_ray(
+                    ray_color,
+                    hit_ids,
+                    hit_pos,
+                    lambertian_ray_dir,
+                    bounces + 1,
+                    active_mask,
+                    row,
+                    col
+                );
             }
         }
     }

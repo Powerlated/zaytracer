@@ -8,8 +8,8 @@ pub const STRIDE: usize = WIDTH * BYTES_PER_PIXEL;
 pub const BYTES_PER_PIXEL: usize = 4;
 pub const BUF_SIZE: usize = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 
-// pub const MAX_ACCUMULATE_STEPS: u32 = 128; // default
-pub const MAX_ACCUMULATE_STEPS: u32 = 1;
+pub const MAX_ACCUMULATE_STEPS: u32 = 128; // default
+// pub const MAX_ACCUMULATE_STEPS: u32 = 1;
 pub const DITHER_DIVISOR: usize = 256;
 pub const MAX_BOUNCES: u8 = 16;
 
