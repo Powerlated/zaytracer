@@ -151,9 +151,15 @@ fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
     return (int as f32) / (0xFFFFFFFFu32 as f32);
 }
 
-const ACCUMULATOR_BUF_LEN: usize = HEIGHT * WIDTH as usize / 16;
+const ACCUMULATOR_BUF_LEN: usize = WIDTH * HEIGHT;
+const INTERMEDIATE_BUF_LEN: usize = ACCUMULATOR_BUF_LEN;
 const RAY_RESTORE_DATA_LEN: usize = WIDTH * HEIGHT;
 
+fn vecboxslice<const L: usize, T: Clone + std::fmt::Debug>(val: T) -> Box<[T; L]> {
+    return vec![val; L].into_boxed_slice().try_into().unwrap();
+}
+
+#[repr(align(64))]
 struct RayRestoreData {
     ray_color: Bgra<Box<[f32; RAY_RESTORE_DATA_LEN]>>,
     origin_id: Box<[u32; RAY_RESTORE_DATA_LEN]>,
@@ -167,10 +173,6 @@ struct RayRestoreData {
 
 impl RayRestoreData {
     fn zero() -> Self {
-        fn vecboxslice<const L: usize, T: Clone + std::fmt::Debug>(val: T) -> Box<[T; L]> {
-            return vec![val; L].into_boxed_slice().try_into().unwrap();
-        }
-        
         Self {
             ray_color: Bgra::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
                 val: [
@@ -208,7 +210,8 @@ pub struct RaytracerSimd {
     main_prng: SFC32Simd,
     random_unit_vector_gen: RandomUnitVectorGenerator,
     geos: Vec<TriSimd>,
-    accumulator_buf: Box<[Bgra<F32x16>; ACCUMULATOR_BUF_LEN]>,
+    intermediate_buf: Bgra<Box<[f32; INTERMEDIATE_BUF_LEN]>>,
+    accumulator_buf: Bgra<Box<[f32; INTERMEDIATE_BUF_LEN]>>,
     accumulate_steps: u32,
 
     ray_restore_data: RayRestoreData,
@@ -252,13 +255,25 @@ impl RaytracerSimd {
             )),
             random_unit_vector_gen: RandomUnitVectorGenerator::new(),
             geos,
-            accumulator_buf: vec![Bgra::<F32x16>::zero(); ACCUMULATOR_BUF_LEN].into_boxed_slice().try_into().unwrap(),
+            accumulator_buf: Bgra::<Box::<[f32; INTERMEDIATE_BUF_LEN]>> { val: [
+                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
+                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
+                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
+                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
+            ]},
             accumulate_steps: 0,
 
             lanes_active: 0,
             lanes_computed: 0,
 
-            ray_restore_data: RayRestoreData::zero()
+            ray_restore_data: RayRestoreData::zero(),
+
+            intermediate_buf: Bgra::<Box::<[f32; INTERMEDIATE_BUF_LEN]>> { val: [
+                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
+                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
+                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
+                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
+            ]}
         }
     }
 
@@ -271,73 +286,97 @@ impl RaytracerSimd {
                 _,
             >(|i| i as u64)));
 
-        // 16 pixels
-        let out_buf: &mut [[u8; 16 * 4]] = bytemuck::cast_slice_mut(buf);
-        // An Rgbf32::<F32x16> is 16 pixels
+        unsafe {
+            let inv_accumulate_steps = 1. / self.accumulate_steps as f32;
 
-        // 16 pixels per iteration
-        for (acc, out) in self.accumulator_buf.iter().zip(out_buf.iter_mut()) {
-            let int = dither_prng.next_u32();
-
-            let uniform_rect_dist =
-                (F32x16::from(int) / (0xFFFFFFFFu32 as f32) - 0.5) * (1. / (DITHER_DIVISOR as f32));
-
-            let inv_accumulate_steps: F32x16 = (1.0 / self.accumulate_steps as f32).into();
-            let dithered_f32_b = acc.val[0] * inv_accumulate_steps + uniform_rect_dist;
-            let dithered_f32_g = acc.val[1] * inv_accumulate_steps + uniform_rect_dist;
-            let dithered_f32_r = acc.val[2] * inv_accumulate_steps + uniform_rect_dist;
-            let scaled_f32_a = acc.val[3] * inv_accumulate_steps;
-
-            // // Construct the first 4 pixels in f32
-            // unsafe {
-            //     // Construct BG
-            //     // let permute = _mm512_permutex2var_ps;
-            //     // idx[i+3:i] is the index into the source vectors
-            //     // idx[i+4] should be 1 to select b
-            //     let indices: [u8; 16] = [
-            //         0,
-            //         0,
-            //         0b00000,
-            //         0b10000,
-            //         0,
-            //         0,
-            //         0b00001,
-            //         0b10001,
-            //         0,
-            //         0,
-            //         0b00010,
-            //         0b10010,
-            //         0,
-            //         0,
-            //         0b00011,
-            //         0b10011,
-            //     ];
-            //     let indices = _mm_loadu_epi8(indices.as_ptr() as *const i8);
-            //     let indices = _mm512_cvtepi8_epi32(indices);
-            //     let mask: u16 = 0b1100110011001100;
-            //     _mm512_mask2_permutex2var_ps(dithered_f32_b.0, indices, mask, dithered_f32_g.0);
-            // }
-
-            let dithered_f32_b_arr: [f32; 16] = dithered_f32_b.into();
-            let dithered_f32_g_arr: [f32; 16] = dithered_f32_g.into();
-            let dithered_f32_r_arr: [f32; 16] = dithered_f32_r.into();
-
-            // TODO: Vectorize this
-            for i in 0..16 {
-                let out_pixel = &mut out[i * 4..i * 4 + 4];
-                out_pixel[0] = ((dithered_f32_b_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-                out_pixel[1] = ((dithered_f32_g_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-                out_pixel[2] = ((dithered_f32_r_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-                out_pixel[3] = 0xFF;
+            // TODO: dithering
+            // step by 16 pixels at a time
+            for i in (0..ACCUMULATOR_BUF_LEN).step_by(16) {
+                // TODO: Vectorize this
+                for j in 0..16 {
+                    // 4 bytes per pixel in output buffer
+                    let offs = i+j;
+                    let offs_out = offs*4;
+                    let out_pixel = &mut buf[offs_out..offs_out+4];
+                    let in_b = self.accumulator_buf.val[0][offs] * inv_accumulate_steps; 
+                    let in_g = self.accumulator_buf.val[1][offs] * inv_accumulate_steps; 
+                    let in_r = self.accumulator_buf.val[2][offs] * inv_accumulate_steps; 
+                    out_pixel[0] = ((in_b.clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+                    out_pixel[1] = ((in_g.clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+                    out_pixel[2] = ((in_r.clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+                    out_pixel[3] = 0xFF;
+                }
             }
-
-            // let color_255: U8x16 = ((dithered_f32.clamp(0.0, 1.0) * 255.0) + 0.5).into();
         }
+
+        // 16 pixels
+        // let out_buf: &mut [[u8; 16 * 4]] = bytemuck::cast_slice_mut(buf);
+        // // An Rgbf32::<F32x16> is 16 pixels
+
+        // // 16 pixels per iteration
+        // for (acc, out) in self.accumulator_buf.iter().zip(out_buf.iter_mut()) {
+        //     let int = dither_prng.next_u32();
+
+        //     let uniform_rect_dist =
+        //         (F32x16::from(int) / (0xFFFFFFFFu32 as f32) - 0.5) * (1. / (DITHER_DIVISOR as f32));
+
+        //     let inv_accumulate_steps: F32x16 = (1.0 / self.accumulate_steps as f32).into();
+        //     let dithered_f32_b = acc.val[0] * inv_accumulate_steps + uniform_rect_dist;
+        //     let dithered_f32_g = acc.val[1] * inv_accumulate_steps + uniform_rect_dist;
+        //     let dithered_f32_r = acc.val[2] * inv_accumulate_steps + uniform_rect_dist;
+        //     let scaled_f32_a = acc.val[3] * inv_accumulate_steps;
+
+        //     // // Construct the first 4 pixels in f32
+        //     // unsafe {
+        //     //     // Construct BG
+        //     //     // let permute = _mm512_permutex2var_ps;
+        //     //     // idx[i+3:i] is the index into the source vectors
+        //     //     // idx[i+4] should be 1 to select b
+        //     //     let indices: [u8; 16] = [
+        //     //         0,
+        //     //         0,
+        //     //         0b00000,
+        //     //         0b10000,
+        //     //         0,
+        //     //         0,
+        //     //         0b00001,
+        //     //         0b10001,
+        //     //         0,
+        //     //         0,
+        //     //         0b00010,
+        //     //         0b10010,
+        //     //         0,
+        //     //         0,
+        //     //         0b00011,
+        //     //         0b10011,
+        //     //     ];
+        //     //     let indices = _mm_loadu_epi8(indices.as_ptr() as *const i8);
+        //     //     let indices = _mm512_cvtepi8_epi32(indices);
+        //     //     let mask: u16 = 0b1100110011001100;
+        //     //     _mm512_mask2_permutex2var_ps(dithered_f32_b.0, indices, mask, dithered_f32_g.0);
+        //     // }
+
+        //     let dithered_f32_b_arr: [f32; 16] = dithered_f32_b.into();
+        //     let dithered_f32_g_arr: [f32; 16] = dithered_f32_g.into();
+        //     let dithered_f32_r_arr: [f32; 16] = dithered_f32_r.into();
+
+        //     // TODO: Vectorize this
+        //     for i in 0..16 {
+        //         let out_pixel = &mut out[i * 4..i * 4 + 4];
+        //         out_pixel[0] = ((dithered_f32_b_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+        //         out_pixel[1] = ((dithered_f32_g_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+        //         out_pixel[2] = ((dithered_f32_r_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+        //         out_pixel[3] = 0xFF;
+        //     }
+
+        //     // let color_255: U8x16 = ((dithered_f32.clamp(0.0, 1.0) * 255.0) + 0.5).into();
+        // }
     }
 
     #[inline(never)]
     pub fn raytrace_step(&mut self, buf: &mut RaytracerBuf) -> u32 {
         if self.accumulate_steps < MAX_ACCUMULATE_STEPS {
+            // **Send out primary rays**
             for row in 0..HEIGHT {
                 // map row to normalized y coordinates
                 //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
@@ -350,19 +389,41 @@ impl RaytracerSimd {
                     let col_offs = U32x16::from(&std::array::from_fn::<_, 16, _>(|i| i as u32));
                     let col = U32x16::from(col_stepped as u32) + col_offs;
 
-                    let jitter = random_jitter(&mut self.main_prng);
-
-                    let row_jittered = F32x16::from(row as f32) + jitter.0;
-                    let col_jittered = F32x16::from(col) + jitter.1;
+                    let mut row_jittered = F32x16::from(row as f32);
+                    let mut col_jittered = F32x16::from(col);
+                    const ENABLE_JITTER: bool = false;
+                    if ENABLE_JITTER {
+                        let jitter = random_jitter(&mut self.main_prng);
+                        row_jittered = row_jittered + jitter.0;
+                        col_jittered = col_jittered + jitter.1;
+                    }
 
                     let norm_y = map_range(row_jittered, 0.0, HEIGHT as f32 - 1.0, -1.0, 1.0);
                     let norm_x = map_range(col_jittered, 0.0, WIDTH as f32 - 1.0, -1.0, 1.0);
 
-                    let new_pixels = self.zaytrace_image_inner(norm_x, norm_y, row as u32, col);
+                    self.zaytrace_primary_rays(norm_x, norm_y, row as u32, col);
+                }
+            }
 
-                    // perform antialiasing accumulate
-                    let acc_pixels = &mut self.accumulator_buf[(row * WIDTH + col_stepped) / 16];
-                    *acc_pixels = (*acc_pixels).add(new_pixels);
+            unsafe {
+                // **Accumulate intermediate buffer into accumulator buffer and zero intermediate buffer**
+                for i in (0..INTERMEDIATE_BUF_LEN).step_by(16) {
+                    let b_inter_ptr = self.intermediate_buf.val[0].as_mut_ptr().add(i);
+                    let g_inter_ptr = self.intermediate_buf.val[1].as_mut_ptr().add(i);
+                    let r_inter_ptr = self.intermediate_buf.val[2].as_mut_ptr().add(i);
+                    let b_acc_ptr = self.accumulator_buf.val[0].as_mut_ptr().add(i);
+                    let g_acc_ptr = self.accumulator_buf.val[1].as_mut_ptr().add(i);
+                    let r_acc_ptr = self.accumulator_buf.val[2].as_mut_ptr().add(i);
+
+                    _mm512_store_ps(b_acc_ptr, _mm512_add_ps(_mm512_load_ps(b_inter_ptr), _mm512_load_ps(b_acc_ptr)));
+                    _mm512_store_ps(g_acc_ptr, _mm512_add_ps(_mm512_load_ps(g_inter_ptr), _mm512_load_ps(g_acc_ptr)));
+                    _mm512_store_ps(r_acc_ptr, _mm512_add_ps(_mm512_load_ps(r_inter_ptr), _mm512_load_ps(r_acc_ptr)));
+
+                    // Zero intermediate buffer
+                    let zero = _mm512_set1_ps(0.);
+                    _mm512_store_ps(b_inter_ptr, zero);
+                    _mm512_store_ps(g_inter_ptr, zero);
+                    _mm512_store_ps(r_inter_ptr, zero);
                 }
             }
 
@@ -378,17 +439,17 @@ impl RaytracerSimd {
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
     #[inline]
-    fn zaytrace_image_inner(&mut self, norm_x: F32x16, flipped_norm_y: F32x16, row: u32, col: U32x16) -> Bgra<F32x16> {
+    fn zaytrace_primary_rays(&mut self, norm_x: F32x16, flipped_norm_y: F32x16, row: u32, col: U32x16) {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
 
         // **Perspective Projection**
-        const FOV_HORIZONTAL_RAD: f32 = deg_to_rad(35.);
+        const FOV_HALF_HORIZONTAL_RAD: f32 = deg_to_rad(70. / 2.);
 
         // Given a projection plane 1 unit ahead of the camera,
         // how far away from the center of the plane are the
         // left/right (x_outer_bound) and top/bottom (y_outer_bound) edges?
-        let x_outer_bound = f32::tan(FOV_HORIZONTAL_RAD);
+        let x_outer_bound = f32::tan(FOV_HALF_HORIZONTAL_RAD);
         let y_outer_bound = x_outer_bound * ((HEIGHT as f32) / (WIDTH as f32));
 
         let x_dir_unnormalized = norm_x * x_outer_bound;
@@ -398,36 +459,45 @@ impl RaytracerSimd {
         let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into())
             .normalize();
 
-        let mut ray_color = Bgra::<F32x16>::from_rgb_f32(1.0, 1.0, 1.0);
-
-        self.zaytrace_ray(
-            &mut ray_color,
+        let ray_color = self.zaytrace_bounce(
             U32x16::from(0),
             ray_pos.splat(),
             ray_dir,
             0xFFFF,
+            0,
             row,
             col
         );
-        
-        return ray_color;
+
+        // write primary rays to intermediate buffer
+        unsafe {
+            // TODO optimize to use write instead of scatter
+            // operating on planar format here, 4 bytes per pixel
+            let offset_row = _mm512_set1_epi32((row * WIDTH as u32) as i32); 
+            let offset = _mm512_add_epi32(offset_row, col.0);
+            _mm512_i32scatter_ps::<4>(self.intermediate_buf.val[0].as_mut_ptr(), offset, ray_color.val[0].0);
+            _mm512_i32scatter_ps::<4>(self.intermediate_buf.val[1].as_mut_ptr(), offset, ray_color.val[1].0);
+            _mm512_i32scatter_ps::<4>(self.intermediate_buf.val[2].as_mut_ptr(), offset, ray_color.val[2].0);
+        }
     }
 
     // **Inner raytracing loop** :D
-    // Traces 16 rays in parallel
+    // Traces one bounce of 16 rays in parallel
     #[inline]
-    fn zaytrace_ray(
+    fn zaytrace_bounce(
         &mut self,
-        ray_color: &mut Bgra::<F32x16>,
         mut origin_id: U32x16,
         mut ray_pos: Vec3<F32x16>,
         mut ray_dir: Vec3<F32x16>,
         mut active_mask: u16, // rays that are still 'alive' i.e. still bouncing around
+        mut bounces: u8,
         row: u32,
         col: U32x16,
-    ) {
+    ) -> Bgra::<F32x16> {
+        let mut ray_color = Bgra::<F32x16>::from_rgb_f32(1.0, 1.0, 1.0);
+
         unsafe {
-            for bounces in 0..MAX_BOUNCES {
+            loop {
                 self.lanes_active += active_mask.count_ones() as u64;
                 self.lanes_computed += 16;
 
@@ -437,6 +507,7 @@ impl RaytracerSimd {
                 let mut hit_t = F32x16::splat(1000.0);
                 let mut hit_pos = Vec3::<F32x16>::zero();
 
+                // **Test rays against all triangles**
                 assert!(self.geos.len() > 1);
                 for (tri_id, tri) in self.geos.iter().enumerate().skip(1) {
                     let hit = tri.intersect(ray_pos, ray_dir);
@@ -535,41 +606,56 @@ impl RaytracerSimd {
                     ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
                     ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
 
-                    // Write restore data for rays that will bounce
-                    // {
-                    //     let bounce_dir = lambertian_ray_dir;
+                    if active_mask != 0xFFFF {
+                        // If ray vector becomes sparse, write restore data for next pass 
+                        let bounce_dir = lambertian_ray_dir;
 
-                    //     let res = &mut self.ray_restore_data;
-                    //     let i = res.entries as usize;
+                        let res = &mut self.ray_restore_data;
+                        let i = res.entries as usize;
 
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, active_mask, ray_color.val[0].0);
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, active_mask, ray_color.val[1].0);
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, active_mask, ray_color.val[2].0);
-                    //     _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, bounce_dir.val[0].0);
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, bounce_dir.val[1].0);
-                    //     _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, bounce_dir.val[2].0);
-                    //     _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, _mm512_set1_epi32(row as i32));
-                    //     _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, active_mask, ray_color.val[0].0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, active_mask, ray_color.val[1].0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, active_mask, ray_color.val[2].0);
+                        _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, bounce_dir.val[0].0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, bounce_dir.val[1].0);
+                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, bounce_dir.val[2].0);
+                        _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, _mm512_set1_epi32(row as i32));
+                        _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
 
-                    //     res.entries += active_mask.count_ones() as u32;
-                    // }
+                        // res.entries += active_mask.count_ones() as u32;
 
-                    origin_id = hit_ids;
-                    ray_pos = hit_pos;
-                    ray_dir = lambertian_ray_dir;
+                        // for debugging - set all preserved rays to magenta
+                        // ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(1.0));
+                        // ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
+                        // ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(1.0));
+
+                        return ray_color;
+                    } else {
+                        // If ray vector is not sparse, bounce immediately 
+                        origin_id = hit_ids;
+                        ray_pos = hit_pos;
+                        ray_dir = lambertian_ray_dir;
+
+                        bounces += 1;
+
+                        if bounces == MAX_BOUNCES {
+                            // If at this point, the ray still has not hit a light (still active), set the ray to black
+                            ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(0.0));
+                            ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
+                            ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(0.0));
+
+                            break ray_color;
+                        }
+                    }
                 } else {
-                    // no rays active, break
-                    break;
+                    // Vector has no more alive rays
+                    return ray_color;
                 }
             }
-
-            ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(0.0));
-            ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
-            ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(0.0));
         }
     }
 }
