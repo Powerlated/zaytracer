@@ -4,10 +4,10 @@ pub mod rng_portable_simd;
 
 use std::arch::x86_64::*;
 use std::f32::consts::PI;
+use std::mem::offset_of;
 use std::ops::Div;
 use std::simd::{u32x16, u64x16};
 
-use bytemuck::offset_of;
 use rand::rngs::Xoshiro128PlusPlus;
 use rand::{Rng, SeedableRng};
 use wgpu::naga::VectorSize::Tri;
@@ -120,7 +120,6 @@ pub struct RaytracerSimd {
     main_prng: Xoshiro128PlusPlusSimd<16>,
     random_unit_vector_gen: RandomUnitVectorGenerator,
     geos: Vec<TriSimd>,
-    shaders: Vec<MaterialShader>,
     accumulator_buf: Box<[Bgra<F32x16>; ACCUMULATOR_BUF_LEN]>,
     accumulate_steps: u32,
 
@@ -133,12 +132,16 @@ impl RaytracerSimd {
         let mut geos = Vec::new();
         let mut shaders = Vec::new();
 
-        // geos[0] is placeholder
+        // geos[0] is placeholder, with its shader values being used for background color
         geos.push(TriSimd {
             v: [Vec3f32::zero(); 3],
             v2_sub_v0: Vec3f32::zero(),
             v1_sub_v0: Vec3f32::zero(),
             n: Vec3f32::zero(),
+            shader: MaterialShader {
+                color: Bgraf32::zero(),
+                emission: 0.0
+            }
         });
         // shaders[0] is backgrond color
         shaders.push(MaterialShader { color: Bgraf32::from_rgb_f32(0., 0., 0.), emission: 0.0 });
@@ -146,10 +149,6 @@ impl RaytracerSimd {
         for geo in raytracer_scalar.geos {
             match geo {
                 Geo::Tri(tri) => {
-                    shaders.push(match tri.shader {
-                        Material(material) => material,
-                        _ => unimplemented!(),
-                    });
                     geos.push(TriSimd::from_scalar_tri(tri));
                 }
                 _ => unimplemented!(),
@@ -163,7 +162,6 @@ impl RaytracerSimd {
             )),
             random_unit_vector_gen: RandomUnitVectorGenerator::new(),
             geos,
-            shaders,
             accumulator_buf: vec![Bgra::<F32x16>::zero(); ACCUMULATOR_BUF_LEN]
                 .into_boxed_slice()
                 .try_into()
@@ -353,7 +351,6 @@ impl RaytracerSimd {
             let mut hit_ids = U32x16::splat(0);
             
             let mut hit_t = F32x16::splat(1000.0);
-            let mut hit_n = Vec3::<F32x16>::zero();
             let mut hit_pos = Vec3::<F32x16>::zero();
 
             assert!(self.geos.len() > 1);
@@ -368,9 +365,6 @@ impl RaytracerSimd {
 
                     // Update the hit_<x> variables for rays we've found a closer intersection for this iteration
                     hit_t.0 = _mm512_mask_mov_ps(hit_t.0, write_mask, hit.t.0);
-                    hit_n.val[0].0 = _mm512_mask_mov_ps(hit_n.val[0].0, write_mask, _mm512_set1_ps(hit.n.val[0])); 
-                    hit_n.val[1].0 = _mm512_mask_mov_ps(hit_n.val[1].0, write_mask, _mm512_set1_ps(hit.n.val[1])); 
-                    hit_n.val[2].0 = _mm512_mask_mov_ps(hit_n.val[2].0, write_mask, _mm512_set1_ps(hit.n.val[2])); 
                     hit_pos.val[0].0 = _mm512_mask_mov_ps(hit_pos.val[0].0, write_mask, hit.p.val[0].0); 
                     hit_pos.val[1].0 = _mm512_mask_mov_ps(hit_pos.val[1].0, write_mask, hit.p.val[1].0); 
                     hit_pos.val[2].0 = _mm512_mask_mov_ps(hit_pos.val[2].0, write_mask, hit.p.val[2].0); 
@@ -384,37 +378,38 @@ impl RaytracerSimd {
 
             // active_mask &= hit_mask;
             
-            let mut material_color = Bgra::<F32x16>::from_rgb_f32(0., 0., 0.);
-            let mut material_emission = F32x16::zero();
-            
-            // **Look up material for rays**
+            // **Look up surface data for rays: Material color, emissivity, and triangle normal vector **
+            let material_color: Bgra<F32x16>;
+            let material_emission: F32x16;
+            let hit_n: Vec3<F32x16>;
             {
-                let material_size = U32x16::splat(size_of::<MaterialShader>() as u32);
-                let material_index = U32x16::from(_mm512_mullo_epi32(hit_ids.0, material_size.0));
-                let material_color_offset = offset_of!(MaterialShader, color); // in bytes
-                let material_emission_offset = offset_of!(MaterialShader, emission); // in bytes
+                let tri_size = U32x16::splat(size_of::<TriSimd>() as u32);
+                let tri_offset = U32x16::from(_mm512_mullo_epi32(hit_ids.0, tri_size.0));
+
                 // Look up color. Blue, green, and then red
-                for i in 0..3 {
-                    let channel_offset = U32x16::splat((material_color_offset + i*4) as u32); // in bytes
-                    
-                    let color_index = material_index + channel_offset;
-                    material_color.val[i] = F32x16::from(_mm512_mask_i32gather_ps::<1>(
-                        material_color.val[i].0,
-                        hit_mask,
-                        color_index.0,
-                        self.shaders.as_ptr() as *const f32,
-                    ));
-                }
+                material_color = Bgra::<F32x16> { val: std::array::from_fn(|i| {
+                    F32x16::from(_mm512_i32gather_ps::<1>(
+                        tri_offset.0,
+                        &self.geos[0].shader.color.val[i] as *const f32,
+                    ))
+                })};
                 
-                let emission_index = material_index + U32x16::splat(material_emission_offset as u32);
-                material_emission = F32x16::from(_mm512_mask_i32gather_ps::<1>(
-                    material_emission.0,
-                    hit_mask,
-                    emission_index.0,
-                    self.shaders.as_ptr() as *const f32,
+                // Look up emission.
+                material_emission = F32x16::from(_mm512_i32gather_ps::<1>(
+                    tri_offset.0,
+                    &self.geos[0].shader.emission as *const f32,
                 ));
+
+                // Look up triangle normal
+                hit_n = Vec3::<F32x16> { val: std::array::from_fn(|i| {
+                    F32x16::from(_mm512_i32gather_ps::<1>(
+                        tri_offset.0,
+                        &self.geos[0].n.val[i] as *const f32,
+                    ))
+                })};
             }
 
+            // TODO: support non-fully emissive
             // handle rays that escaped into the background (!hit_mask) as an emissive hit for material 0
             let emissive_mask = active_mask & (!hit_mask | material_emission.cmp_ge(1.0));
             

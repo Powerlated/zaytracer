@@ -1,4 +1,4 @@
-use crate::raytracer::{math::{Bgra, Mat33, Mat33f32, Vec3, Vec3f32}, scalar::{geometry::Tri, shader::MaterialShader}, simd::avx512::F32x16};
+use crate::raytracer::{math::{Bgra, Mat33, Mat33f32, Vec3, Vec3f32}, scalar::{geometry::Tri, shader::{MaterialShader, TriShader}}, simd::avx512::F32x16};
 
 pub struct TriIntersectionSimd {
     pub p: Vec3::<F32x16>, // Point of intersection
@@ -20,6 +20,8 @@ pub struct TriSimd {
     pub v1_sub_v0: Vec3f32,
     pub v2_sub_v0: Vec3f32,
     pub n: Vec3f32,
+
+    pub shader: MaterialShader,
 }
 
 impl TriSimd {
@@ -59,11 +61,17 @@ impl TriSimd {
 
     pub fn from_scalar_tri(tri: Tri) -> Self {
         let v = tri.v;
+        let shader = match tri.shader {
+            TriShader::Material(material) => material,
+            TriShader::PerVertex(_) => unimplemented!()
+        };
         TriSimd { 
             v,
             v1_sub_v0: v[1].sub(v[0]),
             v2_sub_v0: v[2].sub(v[0]),
-            n: v[1].sub(v[0]).cross(v[2].sub(v[0])).normalize()
+            n: v[1].sub(v[0]).cross(v[2].sub(v[0])).normalize(),
+
+            shader,
         }
     }
 }
