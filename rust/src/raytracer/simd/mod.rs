@@ -23,7 +23,7 @@ use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
 use crate::raytracer::simd::avx512::*;
 use crate::raytracer::simd::geometry::{TriIntersectionSimd, TriSimd};
-use crate::raytracer::simd::rng_portable_simd::Xoshiro128PlusPlusSimd;
+use crate::raytracer::simd::rng_portable_simd::{SFC32Simd, Xoshiro128PlusPlusSimd};
 use crate::raytracer::*;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
@@ -39,7 +39,7 @@ fn random_jitter(prng: &mut Xoshiro128PlusPlusSimd<16>) -> (F32x16, F32x16) {
 }
 
 struct RandomUnitVectorGenerator {
-    prng: Xoshiro128PlusPlusSimd<16>,
+    prng: SFC32Simd,
     buf: [[f32; 32]; 3],
     buf_pos: usize,
 }
@@ -47,8 +47,8 @@ struct RandomUnitVectorGenerator {
 impl RandomUnitVectorGenerator {
     fn new() -> Self {
         Self {
-            prng: Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(
-                std::array::from_fn::<u64, 16, _>(|i| i as u64),
+            prng: SFC32Simd::seed(u32x16::from(
+                std::array::from_fn::<u32, 16, _>(|i| i as u32),
             )),
             buf: [[0.0; 32]; 3],
             buf_pos: 0,
@@ -65,17 +65,33 @@ impl RandomUnitVectorGenerator {
                 self.prng.next_u32(),
             ];
 
-            let xyz_float = Vec3::<F32x16>::from_xyz(
-                F32x16::from(xyz_int[0]),
-                F32x16::from(xyz_int[1]),
-                F32x16::from(xyz_int[2])
-            );
+            // evil floating point bit level magic hacking
+            //  1 bit  8 bits    (1).23 bits          
+            //  sign   exponent  (implicit 1).mantissa
+            // * mantissa has implicit leading 1 bit, giving 24 bits of effective precision
+            // * value = (-1)^sign * (1.0 + fraction) * 2^(exponent-127)
+            
+            /// `int`: lower 23 bits must be I.I.D.
+            /// Returns random float in [-1, 1].
+            fn float_hack(int: __m512i) -> __m512 {
+                unsafe {
+                    let mantissa_mask = _mm512_set1_epi32(0b11111111111111111111111);
+                    let mantissa = _mm512_and_epi32(int, mantissa_mask);
+                    let float_template = _mm512_set1_epi32(0b0_10000000_00000000000000000000000u32 as i32);
 
-            // map [0, 0xFFFFFFFF] to [-1, 1]
-            let xyz_float = xyz_float
-                .div_scalar(0xFFFFFFFFu32 as f32)
-                .mul_scalar_add(2.0,
-                Vec3::<F32x16>::from_xyz((-0.5).into(), (-0.5).into(), (-0.5).into()));
+                    // f1 in [2.0, 4.0)
+                    let f1: __m512 = _mm512_castsi512_ps(_mm512_or_epi32(mantissa, float_template));
+                    // minus three to get [-1.0, 1.0)
+                    let f2 =_mm512_sub_ps(f1, _mm512_set1_ps(3.0));
+                    f2
+                }
+            }
+
+            let xyz_float = Vec3::<F32x16>::from_xyz(
+                F32x16::from(float_hack(xyz_int[0].into())),
+                F32x16::from(float_hack(xyz_int[1].into())),
+                F32x16::from(float_hack(xyz_int[2].into())),
+            );
 
             let xyz_magn = xyz_float.magn();
             // vectors with magnitude less than 1 and greater than 0.01 are valid
@@ -86,6 +102,7 @@ impl RandomUnitVectorGenerator {
 
             // write the valid unit vectors into the output buffer
             unsafe {
+                // compressstore is slow on Zen 4: https://lemire.me/blog/2025/02/14/avx-512-gotcha-avoid-compressing-words-to-memory-with-amd-zen-4-processors/
                 _mm512_mask_compressstoreu_ps((&mut self.buf[0][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[0].0);
                 _mm512_mask_compressstoreu_ps((&mut self.buf[1][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[1].0);
                 _mm512_mask_compressstoreu_ps((&mut self.buf[2][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[2].0);

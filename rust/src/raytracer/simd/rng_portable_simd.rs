@@ -64,3 +64,47 @@ impl<const W: usize> Xoshiro128PlusPlusSimd<W> {
         res
     }
 }
+
+pub struct SFC32Simd {
+    a: u32x16,
+    b: u32x16,
+    c: u32x16,
+    d: u32x16,
+}
+
+impl SFC32Simd {
+    pub fn seed(seed: u32x16) -> Self {
+        let mut sfc32 = Self {
+            a: u32x16::splat(0),
+            b: seed,
+            c: u32x16::splat(0),
+            d: u32x16::splat(1),
+        };
+
+        for _ in 0..24 {
+            sfc32.next_u32();
+        }
+
+        sfc32
+    }
+
+    pub fn next_u32(&mut self) -> u32x16 {
+        const BARREL_SHIFT: u32 = 21;
+        const RSHIFT: u32 = 9;
+        const LSHIFT: u32 = 3;
+
+        let a = self.a;
+        let b = self.b;
+        let c = self.c;
+        let d = self.d;
+
+        let result = a + b + d;
+
+        self.a = b ^ (b >> RSHIFT);
+        self.b = c + (c << LSHIFT);
+        self.c = ((c << BARREL_SHIFT) | (c >> (32 - BARREL_SHIFT))) + result;
+        self.d = d + u32x16::splat(1);
+
+        result
+    }
+}
