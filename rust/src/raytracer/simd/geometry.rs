@@ -37,9 +37,10 @@ impl TriSimd {
         let A = Mat33::<F32x16>::from_col_vecs(D.mul_scalar(-1.0), self.v1_sub_v0.splat(), self.v2_sub_v0.splat());
         let b = O.sub(v0.into());
 
-        let t = A.det_with_col_replaced::<0>(b) / A.det();
-        let u = A.det_with_col_replaced::<1>(b) / A.det();
-        let v = A.det_with_col_replaced::<2>(b) / A.det();
+        let A_det_inv = F32x16::from(1.0) / A.det();
+        let t = A.det_with_col_replaced::<0>(b) * A_det_inv;
+        let u = A.det_with_col_replaced::<1>(b) * A_det_inv;
+        let v = A.det_with_col_replaced::<2>(b) * A_det_inv;
 
         bitfield_no_hit |= t.cmp_lt(0.);
 
