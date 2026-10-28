@@ -45,6 +45,7 @@ impl<const W: usize> Xoshiro128PlusPlusSimd<W> {
         Xoshiro128PlusPlusSimd { s }
     }
 
+    #[inline]
     pub fn next_u32(&mut self) -> Simd<u32, W> {
         let intermed = self.s[0] + self.s[3];
         let res = ((intermed << 7) | (intermed >> (32 - 7))) + self.s[0];

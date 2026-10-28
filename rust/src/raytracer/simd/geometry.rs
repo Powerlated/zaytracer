@@ -25,6 +25,7 @@ pub struct TriSimd {
 impl TriSimd {
     /// Test 16 rays against this triangle
     #[allow(non_snake_case)]
+    #[inline]
     pub fn intersect(&self, O: Vec3::<F32x16>, D: Vec3::<F32x16>) -> TriIntersectionSimd {
         let v0 = self.v[0];
         let v1 = self.v[1];

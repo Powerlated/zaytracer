@@ -175,6 +175,7 @@ impl RaytracerSimd {
         }
     }
 
+    #[inline]
     fn update_and_dither_output_buffer(&mut self, buf: &mut RaytracerBuf) {
         let mut dither_prng =
             Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(std::array::from_fn::<
@@ -247,6 +248,7 @@ impl RaytracerSimd {
         }
     }
 
+    #[inline(never)]
     pub fn raytrace_step(&mut self, buf: &mut RaytracerBuf) -> u32 {
         if self.accumulate_steps < MAX_ACCUMULATE_STEPS {
             for row in 0..HEIGHT {
@@ -288,6 +290,7 @@ impl RaytracerSimd {
     // `norm_x` and `norm_y` are Vulkan-style normalized
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
+    #[inline]
     fn zaytrace_image_inner(&mut self, norm_x: F32x16, flipped_norm_y: F32x16) -> Bgra<F32x16> {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
@@ -324,7 +327,7 @@ impl RaytracerSimd {
 
     // **Inner raytracing loop** :D
     // Traces 16 rays in parallel
-    #[inline(never)]
+    #[inline]
     fn zaytrace_ray(
         &mut self,
         ray_color: &mut Bgra::<F32x16>,
@@ -464,38 +467,6 @@ impl RaytracerSimd {
                     active_mask
                 );
             }
-
-            /*
-            if material.emission >= 1. {
-                // Do not bounce if fully emissive
-                if bounces > 0 {
-                    return material.color.mul_scalar(material.emission);
-                } else {
-                    // To avoid color clipping, don't multiply direct rays by more than 1
-                    return material.color;
-                }
-            } else {
-                let mut n = closest_inter.n;
-                if n.dot(ray_dir) > 0. {
-                    // If normal is facing the wrong direction, flip it
-                    n = n.mul_scalar(-1.);
-                }
-
-                let point_on_sphere =
-                    closest_inter.p.add(random_unit_vector(&mut self.scalar_prng));
-                let point_on_sphere_shifted = point_on_sphere.add(n);
-                let lambertian_ray_dir =
-                    point_on_sphere_shifted.sub(closest_inter.p).normalize();
-                // lambertian_ray_dir now should have a lambertian distribution
-
-                return material.color.mul_elementwise(self.zaytrace_ray(
-                    maybe_closest_inter_geo_id,
-                    closest_inter.p,
-                    lambertian_ray_dir,
-                    bounces + 1,
-                ));
-            }
-            */
         }
     }
 }
