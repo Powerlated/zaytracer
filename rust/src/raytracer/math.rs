@@ -12,13 +12,22 @@ trait One {
     fn one();
 }
 
+pub trait MulAdd {
+    fn mul_add(self, b: Self, c: Self) -> Self;
+}
+
+impl MulAdd for f32 {
+    fn mul_add(self, a: f32, b: f32) -> f32 {
+        f32::mul_add(self, a, b)
+    }
+}
+
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 #[repr(transparent)]
-pub struct Vec3Base<T, const P: usize> {
+pub struct Vec3<T> {
     pub val: [T; 3],
 }
 
-pub type Vec3<T> = Vec3Base<T, 0>;
 pub type Vec3f32 = Vec3<f32>;
 
 impl Vec3f32 {
@@ -58,7 +67,7 @@ impl Sqrt for f32 {
     }
 }
 
-impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Sqrt<Output = T> + Copy> Vec3<T> {
+impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Sqrt<Output = T> + Copy + MulAdd> Vec3<T> {
     pub fn from_xyz(x: T, y: T, z: T) -> Vec3<T> {
         return Vec3 { val: [x, y, z] };
     }
@@ -84,6 +93,14 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
             self.val[0] * b.into(),
             self.val[1] * b.into(),
             self.val[2] * b.into(),
+        ]};
+    }
+
+    pub fn mul_scalar_add<U: Into<T> + Copy>(self: Vec3<T>, a: U, b: Self) -> Vec3<T> {
+        return Vec3 { val: [
+            self.val[0].mul_add(a.into(), b.val[0]),
+            self.val[1].mul_add(a.into(), b.val[1]),
+            self.val[2].mul_add(a.into(), b.val[2]),
         ]};
     }
 

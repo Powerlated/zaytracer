@@ -2,7 +2,7 @@
 
 use std::{arch::x86_64::*, ops::*};
 
-use crate::raytracer::math::{Bgraf32, Sqrt};
+use crate::raytracer::math::{Bgraf32, MulAdd, Sqrt};
 
 pub struct U8x16 (pub __m128i);
 
@@ -185,6 +185,12 @@ impl F32x16 {
 
     #[inline] pub fn cmp_neq<T: Into<Self>>(self, b: T) -> __mmask16 {
         unsafe { _mm512_cmp_ps_mask::<_CMP_NEQ_OS>(self.0, b.into().0) }
+    }
+}
+
+impl MulAdd for F32x16 {
+    #[inline] fn mul_add(self, b: Self, c: Self) -> Self {
+        unsafe { Self(_mm512_fmadd_ps(self.0, b.0, c.0)) }
     }
 }
 

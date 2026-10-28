@@ -49,7 +49,10 @@ impl TriSimd {
         bitfield_no_hit |= u.cmp_lt(0.);
         bitfield_no_hit |= v.cmp_lt(0.);
 
-        let p = v0.splat().mul_scalar(w).add(v1.splat().mul_scalar(u)).add(v2.splat().mul_scalar(v));
+        // p = v0*w + (v1*u + (v2*v));
+        let p = v0.splat().mul_scalar_add(w, 
+                v1.splat().mul_scalar_add(u,
+                v2.splat().mul_scalar(v)));
 
         TriIntersectionSimd { p, n: self.n, t, w, u, v, hitmask: !bitfield_no_hit }
     }
