@@ -20,3 +20,4 @@ The scene rendered for timings:
 | 8ab06df     | 32.846 s | 1226                                 | No BVH, no SoA, autovectorization enabled with target-cpu-x86-64-v4 |
 | 8ab06df     | N/A      | 1351                                 | Same as above, but on target-cpu-x86-64                             |
 | 88b3b85     | N/A      | 474                                  | Initial SIMD attempt                                                |
+| 545dded     | 11.413 s | N/A                                  | SIMD with a lot of `fn`s marked `#[inline]`; 41% lane utilization   |
