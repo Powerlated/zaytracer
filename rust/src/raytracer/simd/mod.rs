@@ -115,6 +115,57 @@ fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
 }
 
 const ACCUMULATOR_BUF_LEN: usize = HEIGHT * WIDTH as usize / 16;
+const RAY_RESTORE_DATA_LEN: usize = WIDTH * HEIGHT;
+
+struct RayRestoreData {
+    ray_color: Bgra<Box<[f32; RAY_RESTORE_DATA_LEN]>>,
+    origin_id: Box<[u32; RAY_RESTORE_DATA_LEN]>,
+    ray_pos: Vec3<Box<[f32; RAY_RESTORE_DATA_LEN]>>, 
+    ray_dir: Vec3<Box<[f32; RAY_RESTORE_DATA_LEN]>>, 
+    bounces: Box<[u32; RAY_RESTORE_DATA_LEN]>,
+    row: Box<[u32; RAY_RESTORE_DATA_LEN]>,
+    col: Box<[u32; RAY_RESTORE_DATA_LEN]>,
+    entries: u32
+}
+
+impl RayRestoreData {
+    fn zero() -> Self {
+        fn vecboxslice<const L: usize, T: Clone + std::fmt::Debug>(val: T) -> Box<[T; L]> {
+            return vec![val; L].into_boxed_slice().try_into().unwrap();
+        }
+        
+        Self {
+            ray_color: Bgra::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
+                val: [
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                ],
+            },
+            origin_id: vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0),
+            ray_pos: Vec3::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
+                val: [
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                ]
+            },
+            ray_dir: Vec3::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
+                val: [
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                    vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
+                ]
+            },
+            bounces: vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0),
+            row: vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0),
+            col: vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0),
+
+            entries: 0
+        }
+    }
+}
 
 pub struct RaytracerSimd {
     main_prng: Xoshiro128PlusPlusSimd<16>,
@@ -122,6 +173,8 @@ pub struct RaytracerSimd {
     geos: Vec<TriSimd>,
     accumulator_buf: Box<[Bgra<F32x16>; ACCUMULATOR_BUF_LEN]>,
     accumulate_steps: u32,
+
+    ray_restore_data: RayRestoreData,
 
     pub lanes_active: u64,
     pub lanes_computed: u64,
@@ -162,14 +215,13 @@ impl RaytracerSimd {
             )),
             random_unit_vector_gen: RandomUnitVectorGenerator::new(),
             geos,
-            accumulator_buf: vec![Bgra::<F32x16>::zero(); ACCUMULATOR_BUF_LEN]
-                .into_boxed_slice()
-                .try_into()
-                .unwrap(),
+            accumulator_buf: vec![Bgra::<F32x16>::zero(); ACCUMULATOR_BUF_LEN].into_boxed_slice().try_into().unwrap(),
             accumulate_steps: 0,
 
             lanes_active: 0,
             lanes_computed: 0,
+
+            ray_restore_data: RayRestoreData::zero()
         }
     }
 
@@ -258,18 +310,18 @@ impl RaytracerSimd {
                     // **First, trace one ray per pixel, and then update the accumulator
                     // buffer with the cumulative average.**
 
-                    let col_offs = F32x16::from(&std::array::from_fn::<_, 16, _>(|i| i as f32));
-                    let col = F32x16::from(col_stepped as f32) + col_offs;
+                    let col_offs = U32x16::from(&std::array::from_fn::<_, 16, _>(|i| i as u32));
+                    let col = U32x16::from(col_stepped as u32) + col_offs;
 
                     let jitter = random_jitter(&mut self.main_prng);
 
                     let row_jittered = F32x16::from(row as f32) + jitter.0;
-                    let col_jittered = col + jitter.1;
+                    let col_jittered = F32x16::from(col) + jitter.1;
 
                     let norm_y = map_range(row_jittered, 0.0, HEIGHT as f32 - 1.0, -1.0, 1.0);
                     let norm_x = map_range(col_jittered, 0.0, WIDTH as f32 - 1.0, -1.0, 1.0);
 
-                    let new_pixels = self.zaytrace_image_inner(norm_x, norm_y);
+                    let new_pixels = self.zaytrace_image_inner(norm_x, norm_y, row as u32, col);
 
                     // perform antialiasing accumulate
                     let acc_pixels = &mut self.accumulator_buf[(row * WIDTH + col_stepped) / 16];
@@ -280,7 +332,10 @@ impl RaytracerSimd {
             // **Then, update the output buffer while dithering it.**
             self.accumulate_steps += 1;
             self.update_and_dither_output_buffer(buf);
+
+            println!("Bounce rays stored: {}", self.ray_restore_data.entries);
         }
+
 
         return self.accumulate_steps;
     }
@@ -289,7 +344,7 @@ impl RaytracerSimd {
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
     #[inline]
-    fn zaytrace_image_inner(&mut self, norm_x: F32x16, flipped_norm_y: F32x16) -> Bgra<F32x16> {
+    fn zaytrace_image_inner(&mut self, norm_x: F32x16, flipped_norm_y: F32x16, row: u32, col: U32x16) -> Bgra<F32x16> {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
 
@@ -317,7 +372,9 @@ impl RaytracerSimd {
             ray_pos.splat(),
             ray_dir,
             0,
-            0xFFFF
+            0xFFFF,
+            row,
+            col
         );
         
         return ray_color;
@@ -329,11 +386,13 @@ impl RaytracerSimd {
     fn zaytrace_ray(
         &mut self,
         ray_color: &mut Bgra::<F32x16>,
-        origin_ids: U32x16,
+        origin_id: U32x16,
         ray_pos: Vec3<F32x16>,
         ray_dir: Vec3<F32x16>,
         bounces: u8,
-        mut active_mask: u16 // rays that are still 'alive' i.e. still bouncing around
+        mut active_mask: u16, // rays that are still 'alive' i.e. still bouncing around
+        row: u32,
+        col: U32x16,
     ) {
         unsafe {
             // Bounce limit
@@ -361,7 +420,7 @@ impl RaytracerSimd {
                     let mut write_mask = hit.hitmask & hit.t.cmp_lt(hit_t);
                     
                     // Prevent rays from hitting their origin triangle
-                    write_mask &= origin_ids.cmp_neq(tri_id as u32);
+                    write_mask &= origin_id.cmp_neq(tri_id as u32);
 
                     // Update the hit_<x> variables for rays we've found a closer intersection for this iteration
                     hit_t.0 = _mm512_mask_mov_ps(hit_t.0, write_mask, hit.t.0);
@@ -375,8 +434,6 @@ impl RaytracerSimd {
 
                 // TODO: alpha
             }
-
-            // active_mask &= hit_mask;
             
             // **Look up surface data for rays: Material color, emissivity, and triangle normal vector **
             let material_color: Bgra<F32x16>;
@@ -453,14 +510,28 @@ impl RaytracerSimd {
                 ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
                 ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
 
-                become self.zaytrace_ray(
-                    ray_color,
-                    hit_ids,
-                    hit_pos,
-                    lambertian_ray_dir,
-                    bounces + 1,
-                    active_mask
-                );
+                // Write restore data for rays that will bounce
+                {
+                    let bounce_dir = lambertian_ray_dir;
+
+                    let res = &mut self.ray_restore_data;
+                    let i = res.entries as usize;
+
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[0][i] as *mut f32, active_mask, ray_color.val[0].0);
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[1][i] as *mut f32, active_mask, ray_color.val[1].0);
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_color.val[2][i] as *mut f32, active_mask, ray_color.val[2].0);
+                    _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, bounce_dir.val[0].0);
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, bounce_dir.val[1].0);
+                    _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, bounce_dir.val[2].0);
+                    _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, _mm512_set1_epi32(row as i32));
+                    _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
+
+                    res.entries += active_mask.count_ones() as u32;
+                }
             }
         }
     }

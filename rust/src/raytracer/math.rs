@@ -22,7 +22,7 @@ impl MulAdd for f32 {
     }
 }
 
-#[derive(Clone, Copy, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Default, Pod, Zeroable, Debug)]
 #[repr(transparent)]
 pub struct Vec3<T> {
     pub val: [T; 3],
