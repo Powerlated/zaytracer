@@ -28,13 +28,29 @@ use crate::raytracer::*;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
-fn random_jitter(prng: &mut Xoshiro128PlusPlusSimd<16>) -> (F32x16, F32x16) {
+fn random_jitter(prng: &mut SFC32Simd) -> (F32x16, F32x16) {
+    /// `int`: lower 23 bits must be I.I.D.
+    /// Returns random float in [-0.5, 0.5].
+    fn float_hack_negpoint5_to_point5(int: __m512i) -> __m512 {
+        unsafe {
+            let mantissa_mask = _mm512_set1_epi32(0b11111111111111111111111);
+            let mantissa = _mm512_and_epi32(int, mantissa_mask);
+            let float_template = _mm512_set1_epi32(0b0_01111111_00000000000000000000000u32 as i32);
+
+            // f1 in [1.0, 2.0)
+            let f1: __m512 = _mm512_castsi512_ps(_mm512_or_epi32(mantissa, float_template));
+            // minus 1.5 to get [-0.5, 0.5)
+            let f2 =_mm512_sub_ps(f1, _mm512_set1_ps(1.5));
+            f2
+        }
+    }
+
     let x_jitter_int = prng.next_u32();
     let y_jitter_int = prng.next_u32();
 
     return (
-        F32x16::from(x_jitter_int) / (0xFFFFFFFFu32 as f32) - 0.5,
-        F32x16::from(y_jitter_int) / (0xFFFFFFFFu32 as f32) - 0.5,
+        float_hack_negpoint5_to_point5(__m512i::from(x_jitter_int)).into(),
+        float_hack_negpoint5_to_point5(__m512i::from(y_jitter_int)).into(),
     );
 }
 
@@ -73,7 +89,7 @@ impl RandomUnitVectorGenerator {
             
             /// `int`: lower 23 bits must be I.I.D.
             /// Returns random float in [-1, 1].
-            fn float_hack(int: __m512i) -> __m512 {
+            fn float_hack_neg1_to_1(int: __m512i) -> __m512 {
                 unsafe {
                     let mantissa_mask = _mm512_set1_epi32(0b11111111111111111111111);
                     let mantissa = _mm512_and_epi32(int, mantissa_mask);
@@ -88,9 +104,9 @@ impl RandomUnitVectorGenerator {
             }
 
             let xyz_float = Vec3::<F32x16>::from_xyz(
-                F32x16::from(float_hack(xyz_int[0].into())),
-                F32x16::from(float_hack(xyz_int[1].into())),
-                F32x16::from(float_hack(xyz_int[2].into())),
+                F32x16::from(float_hack_neg1_to_1(xyz_int[0].into())),
+                F32x16::from(float_hack_neg1_to_1(xyz_int[1].into())),
+                F32x16::from(float_hack_neg1_to_1(xyz_int[2].into())),
             );
 
             let xyz_magn = xyz_float.magn();
@@ -185,7 +201,7 @@ impl RayRestoreData {
 }
 
 pub struct RaytracerSimd {
-    main_prng: Xoshiro128PlusPlusSimd<16>,
+    main_prng: SFC32Simd,
     random_unit_vector_gen: RandomUnitVectorGenerator,
     geos: Vec<TriSimd>,
     accumulator_buf: Box<[Bgra<F32x16>; ACCUMULATOR_BUF_LEN]>,
@@ -227,8 +243,8 @@ impl RaytracerSimd {
 
         Self {
             // start the PRNGs from consistent seed always
-            main_prng: Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(
-                std::array::from_fn::<u64, 16, _>(|i| i as u64),
+            main_prng: SFC32Simd::seed(u32x16::from(
+                std::array::from_fn::<u32, 16, _>(|i| i as u32),
             )),
             random_unit_vector_gen: RandomUnitVectorGenerator::new(),
             geos,
