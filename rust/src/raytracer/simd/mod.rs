@@ -481,8 +481,15 @@ impl RaytracerSimd {
     #[inline]
     fn zaytrace_secondary_rays(&mut self) {
         unsafe {
-            while self.ray_restore_data.entries >= 16 {
-                self.ray_restore_data.entries -= 16;
+            while self.ray_restore_data.entries > 0 {
+                let empty_slots;
+                if self.ray_restore_data.entries < 16 {
+                    empty_slots = 16 - self.ray_restore_data.entries;
+                    self.ray_restore_data.entries = 0;
+                } else {
+                    empty_slots = 0;
+                    self.ray_restore_data.entries -= 16;
+                }
                 let res = &self.ray_restore_data;
                 let i = self.ray_restore_data.entries as usize;
                 // let ray_color_b = _mm512_loadu_ps(&res.ray_color.val[0][i] as *const f32);
@@ -498,7 +505,7 @@ impl RaytracerSimd {
                 let row = _mm512_loadu_epi32(&res.row[i] as *const u32 as *const i32);
                 let col = _mm512_loadu_epi32(&res.col[i] as *const u32 as *const i32);
 
-                let mut active_mask = 0xFFFF;
+                let mut active_mask = 0xFFFF << empty_slots;
                 let secondary = self.zaytrace_bounce(
                     U32x16::from(origin_id),
                     Vec3::<F32x16>::from_xyz(
@@ -535,8 +542,7 @@ impl RaytracerSimd {
                 _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[2].as_mut_ptr(), !active_mask, offset, black);
             }
 
-            // TODO
-            println!("{} secondary rays remain, TODO", self.ray_restore_data.entries);
+            assert_eq!(self.ray_restore_data.entries, 0);
         }
     }
 
