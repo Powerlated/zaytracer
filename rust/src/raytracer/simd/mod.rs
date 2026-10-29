@@ -3,22 +3,16 @@ pub mod geometry;
 pub mod rng_portable_simd;
 
 use std::arch::x86_64::*;
-use std::f32::consts::PI;
-use std::mem::offset_of;
-use std::ops::Div;
 use std::simd::{u32x16, u64x16};
 
 use rand::rngs::Xoshiro128PlusPlus;
 use rand::{Rng, SeedableRng};
-use wgpu::naga::VectorSize::Tri;
 
 use crate::raytracer::math::{
-    Bgra, Bgraf32, Mat33f32, Vec3, Vec3f32, deg_to_rad, hsv_to_rgb, map_range,
+    Bgra, Bgraf32, MulAdd, Vec3, Vec3f32, deg_to_rad,
 };
 use crate::raytracer::scalar::RaytracerScalar;
-use crate::raytracer::scalar::geometry::{
-    Geo, Intersection, IntersectionGeo, cube, square, transform_in_place,
-};
+use crate::raytracer::scalar::geometry::Geo;
 use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
 use crate::raytracer::simd::avx512::*;
@@ -118,14 +112,15 @@ impl RandomUnitVectorGenerator {
             let valid_mask = xyz_magn.cmp_le(1.0) & xyz_magn.cmp_gt(0.01);
 
             // after this, all vectors that satisfy the valid condition will be I.I.D. unit vectors
-            let xyz_float = xyz_float.normalize();
+            let xyz_float = xyz_float.normalize_rsqrt14();
 
             // write the valid unit vectors into the output buffer
             unsafe {
                 // compressstore is slow on Zen 4: https://lemire.me/blog/2025/02/14/avx-512-gotcha-avoid-compressing-words-to-memory-with-amd-zen-4-processors/
-                _mm512_mask_compressstoreu_ps((&mut self.buf[0][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[0].0);
-                _mm512_mask_compressstoreu_ps((&mut self.buf[1][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[1].0);
-                _mm512_mask_compressstoreu_ps((&mut self.buf[2][self.buf_pos]) as *mut f32, valid_mask, xyz_float.val[2].0);
+                let store_mask = 0xFFFF >> valid_mask.count_zeros();
+                _mm512_mask_storeu_ps((&mut self.buf[0][self.buf_pos]) as *mut f32, store_mask, _mm512_mask_compress_ps(xyz_float.val[0].0, valid_mask, xyz_float.val[0].0));
+                _mm512_mask_storeu_ps((&mut self.buf[1][self.buf_pos]) as *mut f32, store_mask, _mm512_mask_compress_ps(xyz_float.val[1].0, valid_mask, xyz_float.val[1].0));
+                _mm512_mask_storeu_ps((&mut self.buf[2][self.buf_pos]) as *mut f32, store_mask, _mm512_mask_compress_ps(xyz_float.val[2].0, valid_mask, xyz_float.val[2].0));
                 self.buf_pos += valid_mask.count_ones() as usize;
                 
                 // we have enough valid unit vectors to return 16 unit vectors
@@ -323,9 +318,9 @@ impl RaytracerSimd {
                     let in_b = self.accumulator_buf.val[0][offs] * inv_accumulate_steps; 
                     let in_g = self.accumulator_buf.val[1][offs] * inv_accumulate_steps; 
                     let in_r = self.accumulator_buf.val[2][offs] * inv_accumulate_steps; 
-                    out_pixel[0] = ((in_b.clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-                    out_pixel[1] = ((in_g.clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-                    out_pixel[2] = ((in_r.clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
+                    out_pixel[0] = in_b.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                    out_pixel[1] = in_g.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                    out_pixel[2] = in_r.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
                     out_pixel[3] = 0xFF;
                 }
             }
@@ -419,6 +414,14 @@ impl RaytracerSimd {
                         col_jittered = col_jittered + jitter.1;
                     }
 
+                    pub fn map_range(s: F32x16, a1: f32, a2: f32, b1: f32, b2: f32) -> F32x16 {
+                        // original: b1 + (s - a1) * (b2 - b1) / (a2 - a1)
+                        //                           <-------const------->
+                        return F32x16::mul_add(s - F32x16::splat(a1), 
+                                               F32x16::splat((b2 - b1) / (a2 - a1)), 
+                                               F32x16::splat(b1));
+                    }
+
                     let norm_y = map_range(row_jittered, 0.0, HEIGHT as f32 - 1.0, -1.0, 1.0);
                     let norm_x = map_range(col_jittered, 0.0, WIDTH as f32 - 1.0, -1.0, 1.0);
 
@@ -474,7 +477,7 @@ impl RaytracerSimd {
 
         let ray_pos = Vec3f32::from_xyz(0.0, 0.0, -2.0);
         let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into())
-            .normalize();
+            .normalize_rsqrt14();
 
         let active_mask = 0xFFFF;
         let init_ray_color = Bgra::<F32x16>::from_rgb_f32(1., 1., 1.);
@@ -690,7 +693,7 @@ impl RaytracerSimd {
 
                     let point_on_sphere = hit_pos.add(self.random_unit_vector_gen.next());
                     let point_on_sphere_shifted = point_on_sphere.add(n);
-                    let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize();
+                    let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize_rsqrt14();
 
                     ray_color.val[0].0 = _mm512_mask_mul_ps(ray_color.val[0].0, active_mask, material_color.val[0].0, ray_color.val[0].0);
                     ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
@@ -717,15 +720,17 @@ impl RaytracerSimd {
                         let res = self.secondary_buf.get_write();
                         let i = res.entries as usize;
 
-                        _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[0][i] as *mut f32, active_mask, ray_pos.val[0].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[1][i] as *mut f32, active_mask, ray_pos.val[1].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_pos.val[2][i] as *mut f32, active_mask, ray_pos.val[2].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[0][i] as *mut f32, active_mask, ray_dir.val[0].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[1][i] as *mut f32, active_mask, ray_dir.val[1].0);
-                        _mm512_mask_compressstoreu_ps(&mut res.ray_dir.val[2][i] as *mut f32, active_mask, ray_dir.val[2].0);
-                        _mm512_mask_compressstoreu_epi32(&mut res.row[i] as *mut u32 as *mut i32, active_mask, row.0);
-                        _mm512_mask_compressstoreu_epi32(&mut res.col[i] as *mut u32 as *mut i32, active_mask, col.0);
+                        // compressstoreu is slow on zen 4, use mask and then store
+                        let store_mask = 0xFFFF >> active_mask.count_zeros();
+                        _mm512_mask_storeu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, store_mask,_mm512_mask_compress_epi32(origin_id.0, active_mask, origin_id.0));
+                        _mm512_mask_storeu_ps(&mut res.ray_pos.val[0][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_pos.val[0].0, active_mask, ray_pos.val[0].0));
+                        _mm512_mask_storeu_ps(&mut res.ray_pos.val[1][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_pos.val[1].0, active_mask, ray_pos.val[1].0));
+                        _mm512_mask_storeu_ps(&mut res.ray_pos.val[2][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_pos.val[2].0, active_mask, ray_pos.val[2].0));
+                        _mm512_mask_storeu_ps(&mut res.ray_dir.val[0][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_dir.val[0].0, active_mask, ray_dir.val[0].0));
+                        _mm512_mask_storeu_ps(&mut res.ray_dir.val[1][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_dir.val[1].0, active_mask, ray_dir.val[1].0));
+                        _mm512_mask_storeu_ps(&mut res.ray_dir.val[2][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_dir.val[2].0, active_mask, ray_dir.val[2].0));
+                        _mm512_mask_storeu_epi32(&mut res.row[i] as *mut u32 as *mut i32, store_mask, _mm512_mask_compress_epi32(row.0, active_mask, row.0));
+                        _mm512_mask_storeu_epi32(&mut res.col[i] as *mut u32 as *mut i32, store_mask, _mm512_mask_compress_epi32(col.0, active_mask, col.0));
 
                         res.entries += active_mask.count_ones() as u32;
 

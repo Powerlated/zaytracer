@@ -1,4 +1,4 @@
-use std::ops::*;
+use std::{arch::x86_64::_mm512_rsqrt14_ps, ops::*};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -42,6 +42,10 @@ impl Vec3f32 {
             F32x16::from(self.val[2])
         ] };
     }
+    
+    pub fn normalize(self: Vec3f32) -> Vec3f32 {
+        return self.div(self.magn());
+    }
 }
 
 impl Vec3<F32x16> {
@@ -52,6 +56,13 @@ impl Vec3<F32x16> {
             F32x16::zero(), 
             F32x16::zero()
         ] };
+    }
+
+    pub fn normalize_rsqrt14(self: Vec3<F32x16>) -> Vec3<F32x16> {
+        unsafe {
+            let inv_magnitude = _mm512_rsqrt14_ps(self.dot(self).0);
+            return self.mul_scalar(F32x16::from(inv_magnitude));
+        }
     }
 }
 
@@ -130,9 +141,9 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
 
     pub fn dot<U: Into<Self> + Copy>(self: Vec3<T>, b: U) -> T {
         return 
-            self.val[0] * b.into().val[0] +
-            self.val[1] * b.into().val[1] +
-            self.val[2] * b.into().val[2];
+            self.val[0].mul_add(b.into().val[0],
+            self.val[1].mul_add(b.into().val[1],
+            self.val[2].mul(b.into().val[2])));
     }
 
     pub fn cross(self: Vec3<T>, b_vec3: Vec3<T>) -> Vec3<T> {
@@ -150,13 +161,7 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
     }
 
     pub fn magn(self: Vec3<T>) -> T {
-        return (self.val[0] * self.val[0] +
-                self.val[1] * self.val[1] +
-                self.val[2] * self.val[2]).sqrt();
-    }
-
-    pub fn normalize(self: Vec3<T>) -> Vec3<T> {
-        return self.div(self.magn());
+        return self.dot(self).sqrt();
     }
 }
 
