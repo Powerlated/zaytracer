@@ -35,10 +35,8 @@ struct WgpuState {
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
 
-    #[cfg(feature = "no_simd")]
-    raytracer: raytracer::scalar::RaytracerScalar,
-    #[cfg(not(feature = "no_simd"))]
-    raytracer: raytracer::simd::RaytracerSimd,
+    raytracer_scalar: raytracer::scalar::RaytracerScalar,
+    raytracer_simd: raytracer::simd::RaytracerSimd,
 
     raytrace_start_time: Option<std::time::Instant>,
     raytrace_finish_time: Option<std::time::Instant>,
@@ -209,10 +207,8 @@ impl WgpuState {
             texture,
             texture_bind_group,
 
-            #[cfg(feature = "no_simd")]
-            raytracer: RaytracerScalar::new(),
-            #[cfg(not(feature = "no_simd"))]
-            raytracer: RaytracerSimd::from_scalar(RaytracerScalar::new()),
+            raytracer_scalar: RaytracerScalar::new(),
+            raytracer_simd: RaytracerSimd::from_scalar(RaytracerScalar::new()),
 
             raytrace_start_time: None,
             raytrace_finish_time: None,
@@ -273,9 +269,9 @@ impl WgpuState {
         // https://docs.amd.com/r/en-US/57368-uProf-user-guide/11.1.5.1.-Group2
         let unboxed = &mut *self.texture_data;
         let as_array = unboxed.try_into().unwrap();
-        let accumulated_samples = self.raytracer.raytrace_step(as_array);
+        let accumulated_samples = self.raytracer_simd.raytrace_step(as_array);
 
-        if accumulated_samples == MAX_ACCUMULATE_STEPS && self.raytrace_finish_time.is_none() {
+        if accumulated_samples == HEIGHT as u32 && self.raytrace_finish_time.is_none() {
             self.raytrace_finish_time = Some(std::time::Instant::now());
         }
 
@@ -293,13 +289,14 @@ impl WgpuState {
         }
 
         #[cfg(not(feature = "no_simd"))]
-        let lanes_active_pct = self.raytracer.lanes_active * 100 / self.raytracer.lanes_computed;
+        let lanes_active_pct = self.raytracer_simd.lanes_active * 100 / self.raytracer_simd.lanes_computed;
         #[cfg(not(feature = "no_simd"))]
         let lanes_active_pct_formatted = format!("{}%", lanes_active_pct);
 
-        self.arc_window.set_title(format!("Brian Jia - Raytracer {} [{}/{}] {} {} lane util {}", 
+        self.arc_window.set_title(format!("Brian Jia - Raytracer {} [{}/{}] {} spp {} {} lane util {}", 
             if cfg!(feature = "no_simd") { "Scalar" } else { "SIMD" },
             accumulated_samples,
+            HEIGHT,
             MAX_ACCUMULATE_STEPS,
             suffix,
             if cfg!(feature = "no_simd") {""} else {lanes_active_pct_formatted.as_str()},
