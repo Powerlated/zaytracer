@@ -387,6 +387,12 @@ impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
         // }
     }
 
+    pub fn raytrace_to_completion(&mut self, buf: &mut RaytracerBuf) {
+        while self.accumulate_steps < MAX_ACCUMULATE_STEPS {
+            self.raytrace_step(buf);
+        }
+    }
+
     #[inline(never)]
     pub fn raytrace_step(&mut self, buf: &mut RaytracerBuf) -> u32 {
         if self.accumulate_steps < MAX_ACCUMULATE_STEPS {

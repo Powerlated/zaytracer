@@ -41,7 +41,7 @@ struct WgpuState {
     #[cfg(feature = "no_simd")]
     raytracer: raytracer::scalar::RaytracerScalar,
     #[cfg(not(feature = "no_simd"))]
-    raytracer: raytracer::simd::RaytracerSimd<16>,
+    raytracer: raytracer::simd::RaytracerSimd<14>,
 
     raytrace_start_time: Option<std::time::Instant>,
     raytrace_finish_time: Option<std::time::Instant>,
