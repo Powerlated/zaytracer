@@ -8,7 +8,6 @@ pub struct TriIntersectionSimd {
     pub u: F32x16,
     pub v: F32x16,
     
-    pub n: Vec3f32, // Normalized normal vector of intersection surface
     pub hitmask: u16,
 }
 
@@ -39,7 +38,7 @@ impl TriSimd {
         let A = Mat33::<F32x16>::from_col_vecs(D.mul_scalar(-1.0), self.v1_sub_v0.splat(), self.v2_sub_v0.splat());
         let b = O.sub(v0.into());
 
-        let A_det_inv = F32x16::from(1.0) / A.det();
+        let A_det_inv = A.det().rcp14(); // TODO this might break
         let t = A.det_with_col_replaced::<0>(b) * A_det_inv;
         let u = A.det_with_col_replaced::<1>(b) * A_det_inv;
         let v = A.det_with_col_replaced::<2>(b) * A_det_inv;
@@ -56,7 +55,7 @@ impl TriSimd {
                 v1.splat().mul_scalar_add(u,
                 v2.splat().mul_scalar(v)));
 
-        TriIntersectionSimd { p, n: self.n, t, w, u, v, hitmask: !bitfield_no_hit }
+        TriIntersectionSimd { p, t, w, u, v, hitmask: !bitfield_no_hit }
     }
 
     pub fn from_scalar_tri(tri: Tri) -> Self {

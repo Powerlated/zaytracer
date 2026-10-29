@@ -22,6 +22,16 @@ impl MulAdd for f32 {
     }
 }
 
+pub trait MulSub {
+    fn mul_sub(self, b: Self, c: Self) -> Self;
+}
+
+impl MulSub for f32 {
+    fn mul_sub(self, a: f32, b: f32) -> f32 {
+        f32::mul_add(self, a, -b)
+    }
+}
+
 #[derive(Clone, Copy, Default, Pod, Zeroable, Debug)]
 #[repr(transparent)]
 pub struct Vec3<T> {
@@ -58,10 +68,14 @@ impl Vec3<F32x16> {
         ] };
     }
 
-    pub fn normalize_rsqrt14(self: Vec3<F32x16>) -> Vec3<F32x16> {
+    #[inline] pub fn inv_magnitude_rsqrt14(self: Vec3<F32x16>) -> F32x16 {
+        unsafe { F32x16(_mm512_rsqrt14_ps(self.dot(self).0)) }
+    }
+
+    #[inline] pub fn normalize_rsqrt14(self: Vec3<F32x16>) -> Self {
         unsafe {
             let inv_magnitude = _mm512_rsqrt14_ps(self.dot(self).0);
-            return self.mul_scalar(F32x16::from(inv_magnitude));
+            self.mul_scalar(F32x16::from(inv_magnitude))
         }
     }
 }
@@ -78,12 +92,12 @@ impl Sqrt for f32 {
     }
 }
 
-impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Sqrt<Output = T> + Copy + MulAdd> Vec3<T> {
+impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Sqrt<Output = T> + Copy + MulAdd + MulSub> Vec3<T> {
     pub fn from_xyz(x: T, y: T, z: T) -> Vec3<T> {
         return Vec3 { val: [x, y, z] };
     }
 
-    pub fn add(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
+    #[inline] pub fn add(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] + b.val[0],
             self.val[1] + b.val[1],
@@ -91,7 +105,7 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
 
-    pub fn sub(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
+    #[inline] pub fn sub(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] - b.val[0],
             self.val[1] - b.val[1],
@@ -99,7 +113,7 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
 
-    pub fn mul_scalar<U: Into<T> + Copy>(self: Vec3<T>, b: U) -> Vec3<T> {
+    #[inline] pub fn mul_scalar<U: Into<T> + Copy>(self: Vec3<T>, b: U) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] * b.into(),
             self.val[1] * b.into(),
@@ -107,7 +121,7 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
 
-    pub fn mul_scalar_add<U: Into<T> + Copy>(self: Vec3<T>, a: U, b: Self) -> Vec3<T> {
+    #[inline] pub fn mul_scalar_add<U: Into<T> + Copy>(self: Vec3<T>, a: U, b: Self) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0].mul_add(a.into(), b.val[0]),
             self.val[1].mul_add(a.into(), b.val[1]),
@@ -115,7 +129,7 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
 
-    pub fn mul_elementwise(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
+    #[inline] pub fn mul_elementwise(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] * b.val[0],
             self.val[1] * b.val[1],
@@ -123,7 +137,7 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
 
-    pub fn div(self: Vec3<T>, b: T) -> Vec3<T> {
+    #[inline] pub fn div(self: Vec3<T>, b: T) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] / b,
             self.val[1] / b,
@@ -131,7 +145,7 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
     
-    pub fn div_scalar<U: Into<T> + Copy>(self: Vec3<T>, b: U) -> Vec3<T> {
+    #[inline] pub fn div_scalar<U: Into<T> + Copy>(self: Vec3<T>, b: U) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] / b.into(),
             self.val[1] / b.into(),
@@ -139,14 +153,14 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
 
-    pub fn dot<U: Into<Self> + Copy>(self: Vec3<T>, b: U) -> T {
+    #[inline] pub fn dot<U: Into<Self> + Copy>(self: Vec3<T>, b: U) -> T {
         return 
             self.val[0].mul_add(b.into().val[0],
             self.val[1].mul_add(b.into().val[1],
             self.val[2].mul(b.into().val[2])));
     }
 
-    pub fn cross(self: Vec3<T>, b_vec3: Vec3<T>) -> Vec3<T> {
+    #[inline] pub fn cross(self: Vec3<T>, b_vec3: Vec3<T>) -> Vec3<T> {
         let a = self.val;
         let b = b_vec3.val;
         let x = 0;
@@ -155,12 +169,12 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         return Vec3 { val: [a[y] * b[z] - a[z] * b[y], a[z] * b[x] - a[x] * b[z], a[x] * b[y] - a[y] * b[x]] };
     }
 
-    pub fn proj(self: Vec3<T>, v: Vec3<T>) -> Vec3<T> {
+    #[inline] pub fn proj(self: Vec3<T>, v: Vec3<T>) -> Vec3<T> {
         let u = self;
         return u.mul_scalar(v.dot(u) / u.dot(u));
     }
 
-    pub fn magn(self: Vec3<T>) -> T {
+    #[inline] pub fn magn(self: Vec3<T>) -> T {
         return self.dot(self).sqrt();
     }
 }
@@ -314,7 +328,7 @@ pub struct Mat33<T> {
     pub val: [T; 9]
 }
 
-impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy> Mat33<T> {
+impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy + MulAdd + MulSub> Mat33<T> {
     pub fn det(&self) -> T {
         let v = self.val;
         let a = v[0];
@@ -327,7 +341,10 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         let h = v[7];
         let i = v[8];
 
-        return (a * e * i + b * f * g + c * d * h) - (c * e * g + a * f * h + b * d * i);
+        // original (a * e * i + b * f * g + c * d * h) - (c * e * g + a * f * h + b * d * i);
+        // better? a(ei - fh) - b(di - fg) + c(dh - eg)
+        // better? (e*i - (f*h))*a + (b(fg - di) + c(dh - eg))
+        return e.mul_sub(i, f*h).mul_add(a, b.mul_add(f.mul_sub(g, d*i), c*(d.mul_sub(h, e*g))));
     }
 
     // Calculates determinant of `self`, with column at column index (0-indexed)

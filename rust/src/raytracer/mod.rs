@@ -15,4 +15,6 @@ pub const MAX_BOUNCES: u8 = 16; // default
 // pub const MAX_BOUNCES: u8 = 1;
 pub const ENABLE_JITTER: bool = true;
 
+pub const FORCE_HIDPI: bool = true;
+
 pub type RaytracerBuf = [u8; BUF_SIZE];

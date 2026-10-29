@@ -12,7 +12,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
-use crate::raytracer::{HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
+use crate::raytracer::{FORCE_HIDPI, HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
 use crate::raytracer::simd::*;
 use ::raytracer::GIT_HASH_AND_DIRTY_STR;
 
@@ -336,7 +336,7 @@ impl ApplicationHandler for App {
 
         arc_window.set_resizable(false);
         arc_window.set_enabled_buttons(arc_window.enabled_buttons().difference(WindowButtons::MAXIMIZE));
-        let hidpi = arc_window.scale_factor() >= 1.5;
+        let hidpi = arc_window.scale_factor() >= 1.5 || FORCE_HIDPI;
 
         let l_size = if hidpi {
             winit::dpi::PhysicalSize::new((WIDTH * 2) as u32, (HEIGHT * 2) as u32)

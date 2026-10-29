@@ -107,9 +107,10 @@ impl RandomUnitVectorGenerator {
                 F32x16::from(float_hack_neg1_to_1(xyz_int[2].into())),
             );
 
-            let xyz_magn = xyz_float.magn();
+            let inv_xyz_magn = xyz_float.inv_magnitude_rsqrt14();
             // vectors with magnitude less than 1 and greater than 0.01 are valid
-            let valid_mask = xyz_magn.cmp_le(1.0) & xyz_magn.cmp_gt(0.01);
+            // -> this is algebraically equivalent to xyz_magn.cmp_le(1.0) & xyz_magn.cmp_ge(0.001);
+            let valid_mask = inv_xyz_magn.cmp_ge(1.0) & inv_xyz_magn.cmp_le(31.6227766017);
 
             // after this, all vectors that satisfy the valid condition will be I.I.D. unit vectors
             let xyz_float = xyz_float.normalize_rsqrt14();
@@ -122,7 +123,7 @@ impl RandomUnitVectorGenerator {
                 _mm512_mask_storeu_ps((&mut self.buf[1][self.buf_pos]) as *mut f32, store_mask, _mm512_mask_compress_ps(xyz_float.val[1].0, valid_mask, xyz_float.val[1].0));
                 _mm512_mask_storeu_ps((&mut self.buf[2][self.buf_pos]) as *mut f32, store_mask, _mm512_mask_compress_ps(xyz_float.val[2].0, valid_mask, xyz_float.val[2].0));
                 self.buf_pos += valid_mask.count_ones() as usize;
-                
+
                 // we have enough valid unit vectors to return 16 unit vectors
                 if self.buf_pos >= 16 {
                     self.buf_pos -= 16;
@@ -296,35 +297,29 @@ impl RaytracerSimd {
 
     #[inline]
     fn update_and_dither_output_buffer(&mut self, buf: &mut RaytracerBuf) {
-        let mut dither_prng =
-            Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(std::array::from_fn::<
-                u64,
-                16,
-                _,
-            >(|i| i as u64)));
+        let inv_accumulate_steps = 1. / self.accumulate_steps as f32;
 
-        unsafe {
-            let inv_accumulate_steps = 1. / self.accumulate_steps as f32;
-
-            // TODO: dithering
-            // step by 16 pixels at a time
-            for i in (0..ACCUMULATOR_BUF_LEN).step_by(16) {
-                // TODO: Vectorize this
-                for j in 0..16 {
-                    // 4 bytes per pixel in output buffer
-                    let offs = i+j;
-                    let offs_out = offs*4;
-                    let out_pixel = &mut buf[offs_out..offs_out+4];
-                    let in_b = self.accumulator_buf.val[0][offs] * inv_accumulate_steps; 
-                    let in_g = self.accumulator_buf.val[1][offs] * inv_accumulate_steps; 
-                    let in_r = self.accumulator_buf.val[2][offs] * inv_accumulate_steps; 
-                    out_pixel[0] = in_b.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                    out_pixel[1] = in_g.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                    out_pixel[2] = in_r.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                    out_pixel[3] = 0xFF;
-                }
+        // TODO: dithering
+        // step by 16 pixels at a time
+        for i in (0..ACCUMULATOR_BUF_LEN).step_by(16) {
+            // TODO: Vectorize this
+            for j in 0..16 {
+                // 4 bytes per pixel in output buffer
+                let offs = i+j;
+                let offs_out = offs*4;
+                let out_pixel = &mut buf[offs_out..offs_out+4];
+                let in_b = self.accumulator_buf.val[0][offs] * inv_accumulate_steps; 
+                let in_g = self.accumulator_buf.val[1][offs] * inv_accumulate_steps; 
+                let in_r = self.accumulator_buf.val[2][offs] * inv_accumulate_steps; 
+                out_pixel[0] = in_b.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                out_pixel[1] = in_g.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                out_pixel[2] = in_r.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                out_pixel[3] = 0xFF;
             }
         }
+
+        let mut dither_prng =
+            Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(std::array::from_fn::<u64, 16, _,>(|i| i as u64)));
 
         // 16 pixels
         // let out_buf: &mut [[u8; 16 * 4]] = bytemuck::cast_slice_mut(buf);
@@ -576,7 +571,7 @@ impl RaytracerSimd {
 
     // **Inner raytracing loop** :D
     // Traces one bounce of 16 rays in parallel
-    #[inline]
+    #[inline(always)]
     fn zaytrace_bounce(
         &mut self,
         mut ray_color: Bgra::<F32x16>,
