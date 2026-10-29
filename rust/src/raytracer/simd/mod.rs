@@ -174,14 +174,6 @@ struct RayRestoreData {
 impl RayRestoreData {
     fn zero() -> Self {
         Self {
-            // ray_color: Bgra::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
-            //     val: [
-            //         vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
-            //         vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
-            //         vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
-            //         vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0.0),
-            //     ],
-            // },
             origin_id: vecboxslice::<RAY_RESTORE_DATA_LEN, _>(0),
             ray_pos: Vec3::<Box::<[f32; RAY_RESTORE_DATA_LEN]>> {
                 val: [
@@ -206,6 +198,36 @@ impl RayRestoreData {
     }
 }
 
+struct SecondaryBuffer {
+    bufs: [RayRestoreData; 2],
+    buf_i: usize
+}
+
+impl SecondaryBuffer {
+    fn new() -> Self {
+        Self { 
+            bufs: [ RayRestoreData::zero(), RayRestoreData::zero() ],
+            buf_i: 0,
+        }
+    }
+
+    fn get_read(&self) -> &RayRestoreData {
+        return &self.bufs[self.buf_i & 1];
+    }
+
+    fn get_read_mut(&mut self) -> &mut RayRestoreData {
+        return &mut self.bufs[self.buf_i & 1];
+    }
+
+    fn get_write(&mut self) -> &mut RayRestoreData {
+        return &mut self.bufs[(self.buf_i & 1) ^ 1];
+    }
+
+    fn swap_buffers(&mut self) {
+        self.buf_i ^= 1;
+    }
+}
+
 pub struct RaytracerSimd {
     main_prng: SFC32Simd,
     random_unit_vector_gen: RandomUnitVectorGenerator,
@@ -214,7 +236,7 @@ pub struct RaytracerSimd {
     accumulator_buf: Bgra<Box<[f32; INTERMEDIATE_BUF_LEN]>>,
     accumulate_steps: u32,
 
-    ray_restore_data: RayRestoreData,
+    secondary_buf: SecondaryBuffer,
 
     pub lanes_active: u64,
     pub lanes_computed: u64,
@@ -266,7 +288,7 @@ impl RaytracerSimd {
             lanes_active: 0,
             lanes_computed: 0,
 
-            ray_restore_data: RayRestoreData::zero(),
+            secondary_buf: SecondaryBuffer::new(),
 
             intermediate_buf: Bgra::<Box::<[f32; INTERMEDIATE_BUF_LEN]>> { val: [
                 vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
@@ -391,7 +413,6 @@ impl RaytracerSimd {
 
                     let mut row_jittered = F32x16::from(row as f32);
                     let mut col_jittered = F32x16::from(col);
-                    const ENABLE_JITTER: bool = false;
                     if ENABLE_JITTER {
                         let jitter = random_jitter(&mut self.main_prng);
                         row_jittered = row_jittered + jitter.0;
@@ -483,67 +504,70 @@ impl RaytracerSimd {
     #[inline]
     fn zaytrace_secondary_rays(&mut self) {
         unsafe {
-            println!("Processing {} secondary rays", self.ray_restore_data.entries);
-            while self.ray_restore_data.entries > 0 {
-                let empty_slots;
-                if self.ray_restore_data.entries < 16 {
-                    empty_slots = 16 - self.ray_restore_data.entries;
-                    self.ray_restore_data.entries = 0;
-                } else {
-                    empty_slots = 0;
-                    self.ray_restore_data.entries -= 16;
+            for i in 1..MAX_BOUNCES {
+                self.secondary_buf.swap_buffers();
+                // println!("Processing {} secondary rays", self.secondary_buf.get_read().entries);
+                while self.secondary_buf.get_read().entries > 0 {
+                    let res = self.secondary_buf.get_read_mut();
+                    let empty_slots;
+                    if res.entries < 16 {
+                        empty_slots = 16 - res.entries;
+                        res.entries = 0;
+                    } else {
+                        empty_slots = 0;
+                        res.entries -= 16;
+                    }
+                    let i = res.entries as usize;
+                    let origin_id = _mm512_loadu_epi32(&res.origin_id[i] as *const u32 as *const i32);
+                    let ray_pos_x = _mm512_loadu_ps(&res.ray_pos.val[0][i] as *const f32);
+                    let ray_pos_y = _mm512_loadu_ps(&res.ray_pos.val[1][i] as *const f32);
+                    let ray_pos_z = _mm512_loadu_ps(&res.ray_pos.val[2][i] as *const f32);
+                    let ray_dir_x = _mm512_loadu_ps(&res.ray_dir.val[0][i] as *const f32);
+                    let ray_dir_y = _mm512_loadu_ps(&res.ray_dir.val[1][i] as *const f32);
+                    let ray_dir_z = _mm512_loadu_ps(&res.ray_dir.val[2][i] as *const f32);
+                    let row = _mm512_loadu_epi32(&res.row[i] as *const u32 as *const i32);
+                    let col = _mm512_loadu_epi32(&res.col[i] as *const u32 as *const i32);
+
+                    // obtain secondary ray color from intermediate buffer
+                    let offset = _mm512_add_epi32(_mm512_mullo_epi32(row, _mm512_set1_epi32(WIDTH as i32)), col);
+
+                    let secondary_color = Bgra::<F32x16> { val: [
+                        F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[0].as_ptr())),
+                        F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[1].as_ptr())),
+                        F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[2].as_ptr())),
+                        F32x16(_mm512_set1_ps(1.0)),
+                    ]};
+
+                    let active_mask = 0xFFFF >> empty_slots;
+                    let secondary = self.zaytrace_bounce(
+                        secondary_color,
+                        U32x16::from(origin_id),
+                        Vec3::<F32x16>::from_xyz(
+                            F32x16::from(ray_pos_x),
+                            F32x16::from(ray_pos_y),
+                            F32x16::from(ray_pos_z),
+                        ),
+                        Vec3::<F32x16>::from_xyz(
+                            F32x16::from(ray_dir_x),
+                            F32x16::from(ray_dir_y),
+                            F32x16::from(ray_dir_z),
+                        ),
+                        active_mask,
+                        1,
+                        U32x16::from(row),
+                        U32x16::from(col),
+                        true);
+
+                    // write secondary rays to intermediate buffer
+                    // operating on planar format here, 4 bytes per pixel
+                    let scatter_mask = 0xFFFF >> empty_slots;
+                    _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[0].as_mut_ptr(), scatter_mask, offset, secondary.val[0].0);
+                    _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[1].as_mut_ptr(), scatter_mask, offset, secondary.val[1].0);
+                    _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[2].as_mut_ptr(), scatter_mask, offset, secondary.val[2].0);
                 }
-                let res = &self.ray_restore_data;
-                let i = self.ray_restore_data.entries as usize;
-                let origin_id = _mm512_loadu_epi32(&res.origin_id[i] as *const u32 as *const i32);
-                let ray_pos_x = _mm512_loadu_ps(&res.ray_pos.val[0][i] as *const f32);
-                let ray_pos_y = _mm512_loadu_ps(&res.ray_pos.val[1][i] as *const f32);
-                let ray_pos_z = _mm512_loadu_ps(&res.ray_pos.val[2][i] as *const f32);
-                let ray_dir_x = _mm512_loadu_ps(&res.ray_dir.val[0][i] as *const f32);
-                let ray_dir_y = _mm512_loadu_ps(&res.ray_dir.val[1][i] as *const f32);
-                let ray_dir_z = _mm512_loadu_ps(&res.ray_dir.val[2][i] as *const f32);
-                let row = _mm512_loadu_epi32(&res.row[i] as *const u32 as *const i32);
-                let col = _mm512_loadu_epi32(&res.col[i] as *const u32 as *const i32);
 
-                // obtain secondary ray color from intermediate buffer
-                let offset = _mm512_add_epi32(_mm512_mullo_epi32(row, _mm512_set1_epi32(WIDTH as i32)), col);
-
-                let secondary_color = Bgra::<F32x16> { val: [
-                    F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[0].as_ptr())),
-                    F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[1].as_ptr())),
-                    F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[2].as_ptr())),
-                    F32x16(_mm512_set1_ps(1.0)),
-                ]};
-
-                let active_mask = 0xFFFF >> empty_slots;
-                let secondary = self.zaytrace_bounce(
-                    secondary_color,
-                    U32x16::from(origin_id),
-                    Vec3::<F32x16>::from_xyz(
-                        F32x16::from(ray_pos_x),
-                        F32x16::from(ray_pos_y),
-                        F32x16::from(ray_pos_z),
-                    ),
-                    Vec3::<F32x16>::from_xyz(
-                        F32x16::from(ray_dir_x),
-                        F32x16::from(ray_dir_y),
-                        F32x16::from(ray_dir_z),
-                    ),
-                    active_mask,
-                    1,
-                    U32x16::from(row),
-                    U32x16::from(col),
-                    false);
-
-                // write secondary rays to intermediate buffer
-                // operating on planar format here, 4 bytes per pixel
-                let scatter_mask = 0xFFFF >> empty_slots;
-                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[0].as_mut_ptr(), scatter_mask, offset, secondary.val[0].0);
-                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[1].as_mut_ptr(), scatter_mask, offset, secondary.val[1].0);
-                _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[2].as_mut_ptr(), scatter_mask, offset, secondary.val[2].0);
+                assert_eq!(self.secondary_buf.get_read().entries, 0);
             }
-
-            assert_eq!(self.ray_restore_data.entries, 0);
         }
     }
 
@@ -690,7 +714,7 @@ impl RaytracerSimd {
                     // TODO
                     if active_mask != 0xFFFF && emit_secondary {
                         // If ray vector becomes sparse, write restore data for next pass 
-                        let res = &mut self.ray_restore_data;
+                        let res = self.secondary_buf.get_write();
                         let i = res.entries as usize;
 
                         _mm512_mask_compressstoreu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, active_mask, origin_id.0);

@@ -22,3 +22,4 @@ The scene rendered for timings:
 | 88b3b85     | N/A      | 474                                  | Initial SIMD attempt                                                                               |
 | 545dded     | 11.413 s | N/A                                  | SIMD with a lot of `fn`s marked `#[inline]`; 41% lane utilization                                  |
 | f1ad351     | 10.371 s | N/A                                  | Much cleaner tri data lookup; merge triangle and material struct; use FMA in triangle intersection |
+| 55a478b     |  5.886 s | N/A                                  | Lane packing, 99% lane utilization |
