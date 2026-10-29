@@ -1,5 +1,7 @@
 #![feature(portable_simd)]
 #![feature(explicit_tail_calls)]
+#![feature(adt_const_params)]
+#![allow(incomplete_features)]
 #![feature(pointer_is_aligned_to)]
 
 use std::sync::Arc;
@@ -39,7 +41,7 @@ struct WgpuState {
     #[cfg(feature = "no_simd")]
     raytracer: raytracer::scalar::RaytracerScalar,
     #[cfg(not(feature = "no_simd"))]
-    raytracer: raytracer::simd::RaytracerSimd,
+    raytracer: raytracer::simd::RaytracerSimd<16>,
 
     raytrace_start_time: Option<std::time::Instant>,
     raytrace_finish_time: Option<std::time::Instant>,

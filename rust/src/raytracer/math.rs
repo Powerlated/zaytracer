@@ -129,6 +129,14 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         ]};
     }
 
+    #[inline] pub fn mul_scalar_sub<U: Into<T> + Copy>(self: Vec3<T>, a: U, b: Self) -> Vec3<T> {
+        return Vec3 { val: [
+            self.val[0].mul_sub(a.into(), b.val[0]),
+            self.val[1].mul_sub(a.into(), b.val[1]),
+            self.val[2].mul_sub(a.into(), b.val[2]),
+        ]};
+    }
+
     #[inline] pub fn mul_elementwise(self: Vec3<T>, b: Vec3<T>) -> Vec3<T> {
         return Vec3 { val: [
             self.val[0] * b.val[0],
@@ -231,11 +239,6 @@ impl Bgra<F32x16> {
 }
 
 impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Copy> Bgra<T> {
-    pub const INDEX_B: usize = 0;
-    pub const INDEX_G: usize = 1;
-    pub const INDEX_R: usize = 2;
-    pub const INDEX_A: usize = 3;
-
     pub fn add(self: Bgra<T>, b: Bgra<T>) -> Bgra<T> {
         return Bgra { val: [
             self.val[0] + b.val[0],
@@ -349,7 +352,7 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
 
     // Calculates determinant of `self`, with column at column index (0-indexed)
     // `col_i` replaced with `col`.
-    pub fn det_with_col_replaced<const COL_I: usize>(&self, col: Vec3<T>) -> T {
+    #[inline] pub fn det_with_col_replaced<const COL_I: usize>(&self, col: Vec3<T>) -> T {
         let mut replaced: Self = self.clone();
 
         const { assert!(COL_I <= 2, "col_i must be between 0 and 2 for this 3x3 matrix") };
@@ -361,11 +364,11 @@ impl<T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + 
         return replaced.det();
     }
 
-    pub fn from_col_vecs(v0: Vec3<T>, v1: Vec3<T>, v2: Vec3<T>) -> Self {
+    #[inline] pub fn from_col_vecs(v0: Vec3<T>, v1: Vec3<T>, v2: Vec3<T>) -> Self {
         return Self { val: [
-            v0.val[0], v1.val[0], v2.val[0],
-            v0.val[1], v1.val[1], v2.val[1],
-            v0.val[2], v1.val[2], v2.val[2],
+            /*a*/ v0.val[0], /*b*/ v1.val[0], /*c*/ v2.val[0],
+            /*d*/ v0.val[1], /*e*/ v1.val[1], /*f*/ v2.val[1],
+            /*g*/ v0.val[2], /*h*/ v1.val[2], /*i*/ v2.val[2],
         ]};
     }
 }

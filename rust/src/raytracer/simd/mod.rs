@@ -1,25 +1,26 @@
+#![allow(incomplete_features)]
+
 pub mod avx512;
 pub mod geometry;
 pub mod rng_portable_simd;
 
+use std::marker::ConstParamTy;
 use std::arch::x86_64::*;
-use std::ops::Mul;
 // use std::arch::x86_64::*;
-use std::simd::{u32x16, u64x16};
+use std::simd::u32x16;
 
 use rand::rngs::Xoshiro128PlusPlus;
-use rand::{Rng, SeedableRng};
+use rand::Rng;
 
 use crate::raytracer::math::{
     Bgra, Bgraf32, MulAdd, Vec3, Vec3f32, deg_to_rad,
 };
 use crate::raytracer::scalar::RaytracerScalar;
 use crate::raytracer::scalar::geometry::Geo;
-use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
-use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
+use crate::raytracer::scalar::shader::MaterialShader;
 use crate::raytracer::simd::avx512::*;
-use crate::raytracer::simd::geometry::{TriIntersectionSimd, TriSimd};
-use crate::raytracer::simd::rng_portable_simd::{SFC32Simd, Xoshiro128PlusPlusSimd};
+use crate::raytracer::simd::geometry::TriSimd;
+use crate::raytracer::simd::rng_portable_simd::SFC32Simd;
 use crate::raytracer::*;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
@@ -115,7 +116,7 @@ impl RandomUnitVectorGenerator {
             let valid_mask = inv_xyz_magn.cmp_ge(1.0) & inv_xyz_magn.cmp_le(31.6227766017);
 
             // after this, all vectors that satisfy the valid condition will be I.I.D. unit vectors
-            let xyz_float = xyz_float.normalize_rsqrt14();
+            let xyz_float = xyz_float.mul_scalar(inv_xyz_magn);
 
             // write the valid unit vectors into the output buffer
             unsafe {
@@ -225,7 +226,7 @@ impl SecondaryBuffer {
     }
 }
 
-pub struct RaytracerSimd {
+pub struct RaytracerSimd<const REBUNDLE_BELOW: u32> {
     main_prng: SFC32Simd,
     random_unit_vector_gen: RandomUnitVectorGenerator,
     geos: Vec<TriSimd>,
@@ -239,7 +240,7 @@ pub struct RaytracerSimd {
     pub lanes_computed: u64,
 }
 
-impl RaytracerSimd {
+impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
     pub fn from_scalar(raytracer_scalar: RaytracerScalar) -> Self {
         let mut geos = Vec::new();
         let mut shaders = Vec::new();
@@ -319,8 +320,8 @@ impl RaytracerSimd {
             }
         }
 
-        let mut dither_prng =
-            Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(std::array::from_fn::<u64, 16, _,>(|i| i as u64)));
+        // let mut dither_prng =
+            // Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(std::array::from_fn::<u64, 16, _,>(|i| i as u64)));
 
         // 16 pixels
         // let out_buf: &mut [[u8; 16 * 4]] = bytemuck::cast_slice_mut(buf);
@@ -472,8 +473,8 @@ impl RaytracerSimd {
         let y_dir_unnormalized = norm_y * y_outer_bound;
 
         let ray_pos = Vec3f32::from_xyz(0.0, 0.0, -2.0);
-        let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into())
-            .normalize_rsqrt14();
+        // TODO: is normalizing necessary?
+        let ray_dir = Vec3::<F32x16>::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.0.into()).normalize_rsqrt14();
 
         let active_mask = 0xFFFF;
         let init_ray_color = Bgra::<F32x16>::from_rgb_f32(1., 1., 1.);
@@ -680,6 +681,7 @@ impl RaytracerSimd {
 
                     let point_on_sphere = hit_pos.add(self.random_unit_vector_gen.next());
                     let point_on_sphere_shifted = point_on_sphere.add(n);
+                    // TODO: is normalizing necessary?
                     let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize_rsqrt14();
 
                     ray_color.val[0] = ray_color.val[0].mask(active_mask).mul(material_color.val[0]);
@@ -702,7 +704,7 @@ impl RaytracerSimd {
                     }
 
                     // TODO
-                    if active_mask != 0xFFFF && emit_secondary {
+                    if active_mask.count_ones() < REBUNDLE_BELOW && emit_secondary {
                         // If ray vector becomes sparse, write restore data for next pass 
                         let res = self.secondary_buf.get_write();
                         let i = res.entries as usize;

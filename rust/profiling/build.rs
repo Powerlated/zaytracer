@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 // Tested with AMD uProf version 5.3.521.0 on Windows x64

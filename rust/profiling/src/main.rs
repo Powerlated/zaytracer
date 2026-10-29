@@ -2,9 +2,6 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::thread;
-use std::time::Duration;
-
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 use raytracer::raytracer::{HEIGHT, RaytracerBuf, WIDTH};

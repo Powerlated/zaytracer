@@ -1,9 +1,3 @@
-use std::arch::x86_64::*;
-use std::f32::consts::PI;
-use std::ops::Div;
-use std::simd::num::{SimdFloat, SimdUint};
-use std::simd::{f32x16, i32x16, simd_swizzle, u8x16, u32x16, u64x16};
-
 pub mod geometry;
 pub mod rng;
 pub mod shader;
@@ -13,7 +7,7 @@ use rand::{Rng, SeedableRng};
 
 use crate::raytracer::*;
 use crate::raytracer::scalar::geometry::{Geo, Intersection, IntersectionGeo, cube, square, transform_in_place};
-use crate::raytracer::math::{Mat33f32, Bgraf32, Vec3f32, deg_to_rad, hsv_to_rgb, map_range};
+use crate::raytracer::math::{Mat33f32, Bgraf32, Vec3f32, deg_to_rad, map_range};
 use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
 use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
 

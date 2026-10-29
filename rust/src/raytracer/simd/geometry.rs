@@ -39,9 +39,14 @@ impl TriSimd {
         let b = O.sub(v0.into());
 
         let A_det_inv = A.det().rcp14(); // TODO this might break
-        let t = A.det_with_col_replaced::<0>(b) * A_det_inv;
-        let u = A.det_with_col_replaced::<1>(b) * A_det_inv;
-        let v = A.det_with_col_replaced::<2>(b) * A_det_inv;
+        // determinant is linear with respect to column
+        //      can replace `A.det_with_col_replaced::<0>(b.mul_scalar_sub(A_det_inv))`
+        //      with        `A.det_with_col_replaced::<0>(b) * A_det_inv`
+        //      to reduce operations
+        let b_scaled = b.mul_scalar(A_det_inv);
+        let t = A.det_with_col_replaced::<0>(b_scaled);
+        let u = A.det_with_col_replaced::<1>(b_scaled);
+        let v = A.det_with_col_replaced::<2>(b_scaled);
 
         bitfield_no_hit |= t.cmp_lt(0.);
 
