@@ -118,10 +118,9 @@ impl RandomUnitVectorGenerator {
             // write the valid unit vectors into the output buffer
             unsafe {
                 // compressstore is slow on Zen 4: https://lemire.me/blog/2025/02/14/avx-512-gotcha-avoid-compressing-words-to-memory-with-amd-zen-4-processors/
-                let store_mask = 0xFFFF >> valid_mask.count_zeros();
-                _mm512_mask_storeu_ps((&mut self.buf[0][self.buf_pos]) as *mut f32, store_mask, _mm512_mask_compress_ps(xyz_float.val[0].0, valid_mask, xyz_float.val[0].0));
-                _mm512_mask_storeu_ps((&mut self.buf[1][self.buf_pos]) as *mut f32, store_mask, _mm512_mask_compress_ps(xyz_float.val[1].0, valid_mask, xyz_float.val[1].0));
-                _mm512_mask_storeu_ps((&mut self.buf[2][self.buf_pos]) as *mut f32, store_mask, _mm512_mask_compress_ps(xyz_float.val[2].0, valid_mask, xyz_float.val[2].0));
+                xyz_float.val[0].compressstoreu((&mut self.buf[0][self.buf_pos]) as *mut f32, valid_mask);
+                xyz_float.val[1].compressstoreu((&mut self.buf[1][self.buf_pos]) as *mut f32, valid_mask);
+                xyz_float.val[2].compressstoreu((&mut self.buf[2][self.buf_pos]) as *mut f32, valid_mask);
                 self.buf_pos += valid_mask.count_ones() as usize;
 
                 // we have enough valid unit vectors to return 16 unit vectors
@@ -715,17 +714,15 @@ impl RaytracerSimd {
                         let res = self.secondary_buf.get_write();
                         let i = res.entries as usize;
 
-                        // compressstoreu is slow on zen 4, use mask and then store
-                        let store_mask = 0xFFFF >> active_mask.count_zeros();
-                        _mm512_mask_storeu_epi32(&mut res.origin_id[i] as *mut u32 as *mut i32, store_mask,_mm512_mask_compress_epi32(origin_id.0, active_mask, origin_id.0));
-                        _mm512_mask_storeu_ps(&mut res.ray_pos.val[0][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_pos.val[0].0, active_mask, ray_pos.val[0].0));
-                        _mm512_mask_storeu_ps(&mut res.ray_pos.val[1][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_pos.val[1].0, active_mask, ray_pos.val[1].0));
-                        _mm512_mask_storeu_ps(&mut res.ray_pos.val[2][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_pos.val[2].0, active_mask, ray_pos.val[2].0));
-                        _mm512_mask_storeu_ps(&mut res.ray_dir.val[0][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_dir.val[0].0, active_mask, ray_dir.val[0].0));
-                        _mm512_mask_storeu_ps(&mut res.ray_dir.val[1][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_dir.val[1].0, active_mask, ray_dir.val[1].0));
-                        _mm512_mask_storeu_ps(&mut res.ray_dir.val[2][i] as *mut f32, store_mask, _mm512_mask_compress_ps(ray_dir.val[2].0, active_mask, ray_dir.val[2].0));
-                        _mm512_mask_storeu_epi32(&mut res.row[i] as *mut u32 as *mut i32, store_mask, _mm512_mask_compress_epi32(row.0, active_mask, row.0));
-                        _mm512_mask_storeu_epi32(&mut res.col[i] as *mut u32 as *mut i32, store_mask, _mm512_mask_compress_epi32(col.0, active_mask, col.0));
+                        origin_id.compressstoreu(&mut res.origin_id[i] as *mut u32, active_mask);
+                        ray_pos.val[0].compressstoreu(&mut res.ray_pos.val[0][i] as *mut f32, active_mask);
+                        ray_pos.val[1].compressstoreu(&mut res.ray_pos.val[1][i] as *mut f32, active_mask);
+                        ray_pos.val[2].compressstoreu(&mut res.ray_pos.val[2][i] as *mut f32, active_mask);
+                        ray_dir.val[0].compressstoreu(&mut res.ray_dir.val[0][i] as *mut f32, active_mask);
+                        ray_dir.val[1].compressstoreu(&mut res.ray_dir.val[1][i] as *mut f32, active_mask);
+                        ray_dir.val[2].compressstoreu(&mut res.ray_dir.val[2][i] as *mut f32, active_mask);
+                        row.compressstoreu(&mut res.row[i] as *mut u32, active_mask);
+                        col.compressstoreu(&mut res.col[i] as *mut u32, active_mask);
 
                         res.entries += active_mask.count_ones() as u32;
 

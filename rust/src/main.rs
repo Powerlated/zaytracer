@@ -1,5 +1,6 @@
 #![feature(portable_simd)]
 #![feature(explicit_tail_calls)]
+#![feature(pointer_is_aligned_to)]
 
 use std::sync::Arc;
 

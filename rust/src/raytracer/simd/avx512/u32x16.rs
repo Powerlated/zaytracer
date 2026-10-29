@@ -29,6 +29,14 @@ impl U32x16 {
     // #[inline] pub fn clamp<T: Into<Self>>(self, min: T, max: T) -> U32x16 {
     //     Self::max(min.into(), Self::min(self, max))
     // }
+
+    #[inline] pub fn compressstoreu(self, slice: *mut u32, mask: __mmask16) {
+        // compressstoreu is slow on Zen 4, use mask and then store
+        unsafe {
+            let store_mask = 0xFFFF >> mask.count_zeros();
+            _mm512_mask_storeu_epi32(slice as *mut i32, store_mask, _mm512_mask_compress_epi32(self.0, mask, self.0));
+        }
+    }
 }
 
 impl From<u32> for U32x16 {

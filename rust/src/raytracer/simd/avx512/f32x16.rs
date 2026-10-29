@@ -67,6 +67,14 @@ impl F32x16 {
     #[inline] pub fn rcp14(self) -> Self {
         unsafe { Self(_mm512_rcp14_ps(self.0)) }
     }
+
+    #[inline] pub unsafe fn compressstoreu(self, slice: *mut f32, mask: __mmask16) {
+        // compressstoreu is slow on Zen 4, use mask and then store
+        unsafe {
+            let store_mask = 0xFFFF >> mask.count_zeros();
+            _mm512_mask_storeu_ps(slice, store_mask, _mm512_mask_compress_ps(self.0, mask, self.0));
+        }
+    }
 }
 
 impl MulAdd for F32x16 {
