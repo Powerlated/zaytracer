@@ -3,6 +3,8 @@ pub mod geometry;
 pub mod rng_portable_simd;
 
 use std::arch::x86_64::*;
+use std::ops::Mul;
+// use std::arch::x86_64::*;
 use std::simd::{u32x16, u64x16};
 
 use rand::rngs::Xoshiro128PlusPlus;
@@ -108,7 +110,7 @@ impl RandomUnitVectorGenerator {
             );
 
             let inv_xyz_magn = xyz_float.inv_magnitude_rsqrt14();
-            // vectors with magnitude less than 1 and greater than 0.01 are valid
+            // vectors with magnitude less than 1 and greater than 0.001 are valid
             // -> this is algebraically equivalent to xyz_magn.cmp_le(1.0) & xyz_magn.cmp_ge(0.001);
             let valid_mask = inv_xyz_magn.cmp_ge(1.0) & inv_xyz_magn.cmp_le(31.6227766017);
 
@@ -435,9 +437,9 @@ impl RaytracerSimd {
                     let g_acc_ptr = self.accumulator_buf.val[1].as_mut_ptr().add(i);
                     let r_acc_ptr = self.accumulator_buf.val[2].as_mut_ptr().add(i);
 
-                    _mm512_store_ps(b_acc_ptr, _mm512_add_ps(_mm512_load_ps(b_inter_ptr), _mm512_load_ps(b_acc_ptr)));
-                    _mm512_store_ps(g_acc_ptr, _mm512_add_ps(_mm512_load_ps(g_inter_ptr), _mm512_load_ps(g_acc_ptr)));
-                    _mm512_store_ps(r_acc_ptr, _mm512_add_ps(_mm512_load_ps(r_inter_ptr), _mm512_load_ps(r_acc_ptr)));
+                    F32x16::store(b_acc_ptr, F32x16::load(b_inter_ptr) + F32x16::load(b_acc_ptr));
+                    F32x16::store(g_acc_ptr, F32x16::load(g_inter_ptr) + F32x16::load(g_acc_ptr));
+                    F32x16::store(r_acc_ptr, F32x16::load(r_inter_ptr) + F32x16::load(r_acc_ptr));
                 }
             }
 
@@ -492,9 +494,9 @@ impl RaytracerSimd {
             // operating on planar format here, 4 bytes per pixel
             let offset_row = row as usize * WIDTH; 
             let offset = offset_row + col_stepped as usize;
-            _mm512_store_ps(self.intermediate_buf.val[0].as_mut_ptr().add(offset), ray_color.val[0].0);
-            _mm512_store_ps(self.intermediate_buf.val[1].as_mut_ptr().add(offset), ray_color.val[1].0);
-            _mm512_store_ps(self.intermediate_buf.val[2].as_mut_ptr().add(offset), ray_color.val[2].0);
+            F32x16::store(self.intermediate_buf.val[0].as_mut_ptr().add(offset), ray_color.val[0]);
+            F32x16::store(self.intermediate_buf.val[1].as_mut_ptr().add(offset), ray_color.val[1]);
+            F32x16::store(self.intermediate_buf.val[2].as_mut_ptr().add(offset), ray_color.val[2]);
         }
     }
 
@@ -515,24 +517,24 @@ impl RaytracerSimd {
                         res.entries -= 16;
                     }
                     let i = res.entries as usize;
-                    let origin_id = _mm512_loadu_epi32(&res.origin_id[i] as *const u32 as *const i32);
-                    let ray_pos_x = _mm512_loadu_ps(&res.ray_pos.val[0][i] as *const f32);
-                    let ray_pos_y = _mm512_loadu_ps(&res.ray_pos.val[1][i] as *const f32);
-                    let ray_pos_z = _mm512_loadu_ps(&res.ray_pos.val[2][i] as *const f32);
-                    let ray_dir_x = _mm512_loadu_ps(&res.ray_dir.val[0][i] as *const f32);
-                    let ray_dir_y = _mm512_loadu_ps(&res.ray_dir.val[1][i] as *const f32);
-                    let ray_dir_z = _mm512_loadu_ps(&res.ray_dir.val[2][i] as *const f32);
-                    let row = _mm512_loadu_epi32(&res.row[i] as *const u32 as *const i32);
-                    let col = _mm512_loadu_epi32(&res.col[i] as *const u32 as *const i32);
+                    let origin_id = U32x16::load(&res.origin_id[i] as *const u32);
+                    let ray_pos_x = F32x16::load(&res.ray_pos.val[0][i] as *const f32);
+                    let ray_pos_y = F32x16::load(&res.ray_pos.val[1][i] as *const f32);
+                    let ray_pos_z = F32x16::load(&res.ray_pos.val[2][i] as *const f32);
+                    let ray_dir_x = F32x16::load(&res.ray_dir.val[0][i] as *const f32);
+                    let ray_dir_y = F32x16::load(&res.ray_dir.val[1][i] as *const f32);
+                    let ray_dir_z = F32x16::load(&res.ray_dir.val[2][i] as *const f32);
+                    let row = U32x16::load(&res.row[i] as *const u32);
+                    let col = U32x16::load(&res.col[i] as *const u32);
 
                     // obtain secondary ray color from intermediate buffer
-                    let offset = _mm512_add_epi32(_mm512_mullo_epi32(row, _mm512_set1_epi32(WIDTH as i32)), col);
+                    let offset = row * U32x16::splat(WIDTH as u32) + col;
 
                     let secondary_color = Bgra::<F32x16> { val: [
-                        F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[0].as_ptr())),
-                        F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[1].as_ptr())),
-                        F32x16(_mm512_i32gather_ps::<4>(offset, self.intermediate_buf.val[2].as_ptr())),
-                        F32x16(_mm512_set1_ps(1.0)),
+                        F32x16::gather::<4>(self.intermediate_buf.val[0].as_ptr(), offset),
+                        F32x16::gather::<4>(self.intermediate_buf.val[1].as_ptr(), offset),
+                        F32x16::gather::<4>(self.intermediate_buf.val[2].as_ptr(), offset),
+                        F32x16::splat(1.0)
                     ]};
 
                     let active_mask = 0xFFFF >> empty_slots;
@@ -558,9 +560,9 @@ impl RaytracerSimd {
                     // write secondary rays to intermediate buffer
                     // operating on planar format here, 4 bytes per pixel
                     let scatter_mask = 0xFFFF >> empty_slots;
-                    _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[0].as_mut_ptr(), scatter_mask, offset, secondary.val[0].0);
-                    _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[1].as_mut_ptr(), scatter_mask, offset, secondary.val[1].0);
-                    _mm512_mask_i32scatter_ps::<4>(self.intermediate_buf.val[2].as_mut_ptr(), scatter_mask, offset, secondary.val[2].0);
+                    secondary.val[0].mask(scatter_mask).scatter::<4>(self.intermediate_buf.val[0].as_mut_ptr(), offset);
+                    secondary.val[1].mask(scatter_mask).scatter::<4>(self.intermediate_buf.val[1].as_mut_ptr(), offset);
+                    secondary.val[2].mask(scatter_mask).scatter::<4>(self.intermediate_buf.val[2].as_mut_ptr(), offset);
                 }
 
                 assert_eq!(self.secondary_buf.get_read().entries, 0);
@@ -606,13 +608,13 @@ impl RaytracerSimd {
                         write_mask &= origin_id.cmp_neq(tri_id as u32);
 
                         // Update the hit_<x> variables for rays we've found a closer intersection for this iteration
-                        hit_t.0 = _mm512_mask_mov_ps(hit_t.0, write_mask, hit.t.0);
-                        hit_pos.val[0].0 = _mm512_mask_mov_ps(hit_pos.val[0].0, write_mask, hit.p.val[0].0); 
-                        hit_pos.val[1].0 = _mm512_mask_mov_ps(hit_pos.val[1].0, write_mask, hit.p.val[1].0); 
-                        hit_pos.val[2].0 = _mm512_mask_mov_ps(hit_pos.val[2].0, write_mask, hit.p.val[2].0); 
+                        hit_t = hit_t.mask(write_mask).mov(hit.t);
+                        hit_pos.val[0] = hit_pos.val[0].mask(write_mask).mov(hit.p.val[0]); 
+                        hit_pos.val[1] = hit_pos.val[1].mask(write_mask).mov(hit.p.val[1]); 
+                        hit_pos.val[2] = hit_pos.val[2].mask(write_mask).mov(hit.p.val[2]); 
 
                         hit_mask |= write_mask;
-                        hit_ids = U32x16::from(_mm512_mask_mov_epi32(hit_ids.0, write_mask, _mm512_set1_epi32(tri_id as i32)));
+                        hit_ids = hit_ids.mask(write_mask).splat(tri_id as u32);
                     }
 
                     // TODO: alpha
@@ -624,28 +626,19 @@ impl RaytracerSimd {
                 let hit_n: Vec3<F32x16>;
                 {
                     let tri_size = U32x16::splat(size_of::<TriSimd>() as u32);
-                    let tri_offset = U32x16::from(_mm512_mullo_epi32(hit_ids.0, tri_size.0));
+                    let tri_offset = hit_ids * tri_size;
 
                     // Look up color. Blue, green, and then red
                     material_color = Bgra::<F32x16> { val: std::array::from_fn(|i| {
-                        F32x16::from(_mm512_i32gather_ps::<1>(
-                            tri_offset.0,
-                            &self.geos[0].shader.color.val[i] as *const f32,
-                        ))
+                        F32x16::gather::<1>(&self.geos[0].shader.color.val[i] as *const f32, tri_offset)
                     })};
                     
                     // Look up emission.
-                    material_emission = F32x16::from(_mm512_i32gather_ps::<1>(
-                        tri_offset.0,
-                        &self.geos[0].shader.emission as *const f32,
-                    ));
+                    material_emission = F32x16::gather::<1>(&self.geos[0].shader.emission as *const f32, tri_offset); 
 
                     // Look up triangle normal
                     hit_n = Vec3::<F32x16> { val: std::array::from_fn(|i| {
-                        F32x16::from(_mm512_i32gather_ps::<1>(
-                            tri_offset.0,
-                            &self.geos[0].n.val[i] as *const f32,
-                        ))
+                        F32x16::gather::<1>(&self.geos[0].n.val[i] as *const f32, tri_offset)
                     })};
                 }
 
@@ -660,12 +653,12 @@ impl RaytracerSimd {
 
                     if bounces > 0 {
                         for i in 0..3 {
-                            ray_color.val[i].0 =_mm512_mask_mul_ps(ray_color.val[i].0, emissive_mask, ray_color.val[i].0, (material_color.val[i] * material_emission).0);
+                            ray_color.val[i] = ray_color.val[i].mask(emissive_mask).mul(material_color.val[i] * material_emission);
                         }
                     } else {
                         // To avoid color clipping, don't apply gain to direct rays
                         for i in 0..3 {
-                            ray_color.val[i].0 =_mm512_mask_mul_ps(ray_color.val[i].0, emissive_mask, ray_color.val[i].0, material_color.val[i].0);
+                            ray_color.val[i] = ray_color.val[i].mask(emissive_mask).mul(material_color.val[i]);
                         }
                     }
                 }
@@ -679,19 +672,19 @@ impl RaytracerSimd {
                     {
                         let normal_facing_wrong_direction_mask = n.dot(ray_dir).cmp_gt(0.0);
                         // Evil floating point bit level magic hacking??????
-                        let sign_bit: __m512 = std::mem::transmute(_mm512_set1_epi32(0x80000000u32 as i32));
-                        n.val[0].0 = _mm512_mask_xor_ps(n.val[0].0, normal_facing_wrong_direction_mask, n.val[0].0, sign_bit);
-                        n.val[1].0 = _mm512_mask_xor_ps(n.val[1].0, normal_facing_wrong_direction_mask, n.val[1].0, sign_bit);
-                        n.val[2].0 = _mm512_mask_xor_ps(n.val[2].0, normal_facing_wrong_direction_mask, n.val[2].0, sign_bit);
+                        let sign_bit = F32x16(std::mem::transmute(_mm512_set1_epi32(0x80000000u32 as i32)));
+                        n.val[0] = n.val[0].mask(normal_facing_wrong_direction_mask).xor(sign_bit);
+                        n.val[1] = n.val[1].mask(normal_facing_wrong_direction_mask).xor(sign_bit);
+                        n.val[2] = n.val[2].mask(normal_facing_wrong_direction_mask).xor(sign_bit);
                     }
 
                     let point_on_sphere = hit_pos.add(self.random_unit_vector_gen.next());
                     let point_on_sphere_shifted = point_on_sphere.add(n);
                     let lambertian_ray_dir = point_on_sphere_shifted.sub(hit_pos).normalize_rsqrt14();
 
-                    ray_color.val[0].0 = _mm512_mask_mul_ps(ray_color.val[0].0, active_mask, material_color.val[0].0, ray_color.val[0].0);
-                    ray_color.val[1].0 = _mm512_mask_mul_ps(ray_color.val[1].0, active_mask, material_color.val[1].0, ray_color.val[1].0);
-                    ray_color.val[2].0 = _mm512_mask_mul_ps(ray_color.val[2].0, active_mask, material_color.val[2].0, ray_color.val[2].0);
+                    ray_color.val[0] = ray_color.val[0].mask(active_mask).mul(material_color.val[0]);
+                    ray_color.val[1] = ray_color.val[1].mask(active_mask).mul(material_color.val[1]);
+                    ray_color.val[2] = ray_color.val[2].mask(active_mask).mul(material_color.val[2]);
 
                     // Update rays to new location
                     origin_id = hit_ids;
@@ -701,9 +694,9 @@ impl RaytracerSimd {
                     bounces += 1;
                     if bounces > MAX_BOUNCES {
                         // If at this point, the ray still has not hit a light (still active), set the ray to black
-                        ray_color.val[0].0 = _mm512_mask_mov_ps(ray_color.val[0].0, active_mask, _mm512_set1_ps(0.0));
-                        ray_color.val[1].0 = _mm512_mask_mov_ps(ray_color.val[1].0, active_mask, _mm512_set1_ps(0.0));
-                        ray_color.val[2].0 = _mm512_mask_mov_ps(ray_color.val[2].0, active_mask, _mm512_set1_ps(0.0));
+                        ray_color.val[0] = ray_color.val[0].mask(active_mask).splat(0.0);
+                        ray_color.val[1] = ray_color.val[1].mask(active_mask).splat(0.0);
+                        ray_color.val[2] = ray_color.val[2].mask(active_mask).splat(0.0);
 
                         return ray_color;
                     }

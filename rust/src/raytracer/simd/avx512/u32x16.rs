@@ -5,6 +5,14 @@ pub struct U32x16 (pub __m512i);
 
 impl U32x16 {
     pub const WIDTH: usize = 16;
+    
+    #[inline] pub unsafe fn load(slice: *const u32) -> U32x16 {
+        unsafe { Self(_mm512_loadu_epi32(slice as *const i32)) }
+    }
+
+    #[inline] pub unsafe fn store(slice: *mut u32, v: Self) {
+        unsafe { _mm512_storeu_epi32(slice as *mut i32, v.0) }
+    }
 
     #[inline] pub fn splat(scalar: u32) -> U32x16 {
         unsafe { U32x16(_mm512_set1_epi32(scalar as i32)) }
@@ -36,6 +44,10 @@ impl U32x16 {
             let store_mask = 0xFFFF >> mask.count_zeros();
             _mm512_mask_storeu_epi32(slice as *mut i32, store_mask, _mm512_mask_compress_epi32(self.0, mask, self.0));
         }
+    }
+
+    #[inline] pub unsafe fn mask(self, mask: __mmask16) -> U32x16M {
+        U32x16M(self.0, mask)
     }
 }
 
@@ -102,13 +114,33 @@ impl Sub<u32> for U32x16 {
 impl Mul<U32x16> for U32x16 {
     type Output = U32x16;
     #[inline] fn mul(self, _rhs: U32x16) -> U32x16 {
-        unsafe { U32x16(_mm512_mul_epu32(self.0, _rhs.0)) }
+        unsafe { U32x16(_mm512_mullo_epi32(self.0, _rhs.0)) }
     }
 }
 
 impl Mul<u32> for U32x16 {
     type Output = U32x16;
     #[inline] fn mul(self, _rhs: u32) -> U32x16 {
-        unsafe { U32x16(_mm512_mul_epu32(self.0, _mm512_set1_epi32(_rhs as i32))) }
+        unsafe { U32x16(_mm512_mullo_epi32(self.0, _mm512_set1_epi32(_rhs as i32))) }
+    }
+}
+
+pub struct U32x16M (pub __m512i, pub __mmask16);
+
+impl U32x16M {
+    #[inline] pub fn splat(self, scalar: u32) -> U32x16 {
+        unsafe { U32x16(_mm512_mask_mov_epi32(self.0, self.1, _mm512_set1_epi32(scalar as i32))) }
+    }
+
+    #[inline] pub fn mul(self, rhs: U32x16) -> U32x16 {
+        unsafe { U32x16(_mm512_mask_mullo_epi32(self.0, self.1, rhs.0, self.0)) }
+    }
+
+    #[inline] pub fn xor(self, rhs: U32x16) -> U32x16 {
+        unsafe { U32x16(_mm512_mask_xor_epi32(self.0, self.1, rhs.0, self.0)) }
+    }
+
+    #[inline] pub fn mov(self, rhs: U32x16) -> U32x16 {
+        unsafe { U32x16(_mm512_mask_mov_epi32(self.0, self.1, rhs.0)) }
     }
 }

@@ -12,6 +12,18 @@ impl F32x16 {
         unsafe { Self(_mm512_loadu_ps(v.as_ptr())) }
     }
 
+    #[inline] pub unsafe fn load(slice: *const f32) -> F32x16 {
+        unsafe { F32x16(_mm512_loadu_ps(slice)) }
+    }
+
+    #[inline] pub unsafe fn store(slice: *mut f32, v: Self) {
+        unsafe { _mm512_storeu_ps(slice, v.0) }
+    }
+
+    #[inline] pub fn gather<const SCALE: i32>(slice: *const f32, offsets: U32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_i32gather_ps::<SCALE>(offsets.0, slice)) }
+    }
+
     #[inline] pub fn zero() -> F32x16 {
         F32x16::splat(0.0)
     }
@@ -74,6 +86,10 @@ impl F32x16 {
             let store_mask = 0xFFFF >> mask.count_zeros();
             _mm512_mask_storeu_ps(slice, store_mask, _mm512_mask_compress_ps(self.0, mask, self.0));
         }
+    }
+
+    #[inline] pub unsafe fn mask(self, mask: __mmask16) -> F32x16M {
+        F32x16M(self.0, mask)
     }
 }
 
@@ -187,5 +203,29 @@ impl Div<f32> for F32x16 {
     type Output = F32x16;
     #[inline] fn div(self, _rhs: f32) -> F32x16 {
         unsafe { F32x16(_mm512_div_ps(self.0, _mm512_set1_ps(_rhs))) }
+    }
+}
+
+pub struct F32x16M (pub __m512, pub __mmask16);
+
+impl F32x16M {
+    #[inline] pub fn splat(self, scalar: f32) -> F32x16 {
+        unsafe { F32x16(_mm512_mask_mov_ps(self.0, self.1, _mm512_set1_ps(scalar))) }
+    }
+
+    #[inline] pub fn mul(self, rhs: F32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_mask_mul_ps(self.0, self.1, rhs.0, self.0)) }
+    }
+
+    #[inline] pub fn xor(self, rhs: F32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_mask_xor_ps(self.0, self.1, rhs.0, self.0)) }
+    }
+
+    #[inline] pub fn mov(self, rhs: F32x16) -> F32x16 {
+        unsafe { F32x16(_mm512_mask_mov_ps(self.0, self.1, rhs.0)) }
+    }
+
+    #[inline] pub fn scatter<const SCALE: i32>(self, slice: *mut f32, offsets: U32x16) {
+        unsafe { _mm512_mask_i32scatter_ps::<SCALE>(slice, self.1, offsets.0, self.0) }
     }
 }
