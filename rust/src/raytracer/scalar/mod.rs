@@ -242,18 +242,8 @@ impl RaytracerScalar {
                                     n = n.mul_scalar(-1.);
                                 }
 
-                                // **Find orthonormal basis**
-                                // Building an Orthonormal Basis, Revisited - Pixar
-                                // https://jcgt.org/published/0006/01/01/
-                                // const x = n.val[0];
-                                // const y = n.val[1];
-                                // const z = n.val[2];
-                                // const sign = std.math.copysign(@as(f32, 1), z); // std.math.copysign is not the same as std.math.sign
-                                // const a = -1.0 / (sign + z);
-                                // const b = x * y * a;
-                                // const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };
-                                // const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
-                                // now <n, b1, b2> is an orthonormal basis
+                                // **Multiple importance sampling**
+                                
 
                                 // **Lambertian diffuse bounce**
                                 // get a random point on the unit sphere around the hit location
@@ -277,6 +267,19 @@ impl RaytracerScalar {
         return Bgraf32::from_rgb_f32(0., 0., 0.);
     }
 }
+
+// **Find orthonormal basis**
+// Building an Orthonormal Basis, Revisited - Pixar
+// https://jcgt.org/published/0006/01/01/
+// const x = n.val[0];
+// const y = n.val[1];
+// const z = n.val[2];
+// const sign = std.math.copysign(@as(f32, 1), z); // std.math.copysign is not the same as std.math.sign
+// const a = -1.0 / (sign + z);
+// const b = x * y * a;
+// const b1 = Vec3{ .val = .{ 1 + sign * x * x * a, sign * b, -sign * x } };
+// const b2 = Vec3{ .val = .{ b, sign + y * y * a, -y } };
+// now <n, b1, b2> is an orthonormal basis
 
 // pub fn rainbow(buf: &RaytracerScalarBuf) {
 //     for (row, row_pixels) in buf.iter_mut().enumerate() {
