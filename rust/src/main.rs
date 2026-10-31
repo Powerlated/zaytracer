@@ -50,10 +50,9 @@ struct WgpuState {
     texture_bind_group: wgpu::BindGroup,
     
     arc_raytracer_scalar: Arc<raytracer::scalar::RaytracerScalar>,
-    accumulator_buf_scalar: Box<RaytracerBuf>,
-    num_samples_accumulated_scalar: [Arc<AtomicU32>; NUM_WORKERS_SCALAR],
-
-    raytracer_simd: raytracer::simd::RaytracerSimd<14>,
+    accumulator_buf: Box<RaytracerBuf>,
+    arc_num_samples_accumulated: [Arc<AtomicU32>; NUM_WORKERS_SCALAR],
+    arc_lanes_active_pct: Arc<AtomicU32>,
 
     raytrace_start_time: Option<std::time::Instant>,
     raytrace_finish_time: Option<std::time::Instant>,
@@ -225,39 +224,58 @@ impl WgpuState {
             texture_bind_group,
 
             arc_raytracer_scalar: Arc::new(RaytracerScalar::new()),
-            accumulator_buf_scalar: new_raytracer_buf(),
-            num_samples_accumulated_scalar: array::from_fn(|_| Arc::new(AtomicU32::new(0))),
+            accumulator_buf: new_raytracer_buf(),
+            arc_num_samples_accumulated: array::from_fn(|_| Arc::new(AtomicU32::new(0))),
+            arc_lanes_active_pct: Arc::new(AtomicU32::new(0)),
             
-            raytracer_simd: RaytracerSimd::<14>::from_scalar(RaytracerScalar::new()), 
-
             raytrace_start_time: None,
             raytrace_finish_time: None,
         };
-        
-        #[cfg(not(feature = "simd"))]
-        for i in 0..NUM_WORKERS_SCALAR {
-            assert!(HEIGHT % NUM_WORKERS_SCALAR == 0);
-            let rows_per_worker = HEIGHT / NUM_WORKERS_SCALAR;
-            let pixels_per_worker = rows_per_worker * WIDTH;
-            
-            let buf_i = i*pixels_per_worker..(i+1)*pixels_per_worker;
+
+        if IS_SIMD {
             // TODO: get rid of unsafe. the unsafe is to share this buf among threads with no performance penalty
-            let accumulator = wgpu_state.accumulator_buf_scalar[buf_i].as_mut_ptr();
+            let accumulator_buf = wgpu_state.accumulator_buf.as_mut_ptr();
             let acc_slice: &mut [Bgraf32] = unsafe {
-                std::slice::from_raw_parts_mut(accumulator, pixels_per_worker)
+                std::slice::from_raw_parts_mut(accumulator_buf, wgpu_state.accumulator_buf.len())
             };
 
-            let num_samples_accumulated = wgpu_state.num_samples_accumulated_scalar[i].clone();
-            let raytracer = wgpu_state.arc_raytracer_scalar.clone();
+            let arc_lanes_active_pct = wgpu_state.arc_lanes_active_pct.clone();
+            let arc_num_samples_accumulated = wgpu_state.arc_num_samples_accumulated[0].clone();
+
             thread::spawn(move || {
-                let mut prng = SFC32::<u32>::seed(i as u32);
-                let rows = i*rows_per_worker..(i+1)*rows_per_worker;
-                
+                let mut raytracer = RaytracerSimd::<14>::from_scalar(RaytracerScalar::new());
                 for i in 0..MAX_ACCUMULATE_STEPS {
-                    raytracer.raytrace_step(rows.clone(), acc_slice, &mut prng);
-                    num_samples_accumulated.store(i+1, std::sync::atomic::Ordering::Relaxed);
+                    raytracer.raytrace_step(acc_slice);
+                    let lanes_active_pct = raytracer.lanes_active * 100 / raytracer.lanes_computed;
+                    arc_lanes_active_pct.store(lanes_active_pct as u32, std::sync::atomic::Ordering::Relaxed);
+                    arc_num_samples_accumulated.store(i+1, std::sync::atomic::Ordering::Relaxed);
                 }
-            }); 
+            });
+        } else {
+            for i in 0..NUM_WORKERS_SCALAR {
+                assert!(HEIGHT % NUM_WORKERS_SCALAR == 0);
+                let rows_per_worker = HEIGHT / NUM_WORKERS_SCALAR;
+                let pixels_per_worker = rows_per_worker * WIDTH;
+                
+                let buf_i = i*pixels_per_worker..(i+1)*pixels_per_worker;
+                // TODO: get rid of unsafe. the unsafe is to share this buf among threads with no performance penalty
+                let accumulator_buf = wgpu_state.accumulator_buf[buf_i].as_mut_ptr();
+                let acc_slice: &mut [Bgraf32] = unsafe {
+                    std::slice::from_raw_parts_mut(accumulator_buf, pixels_per_worker)
+                };
+
+                let raytracer = wgpu_state.arc_raytracer_scalar.clone();
+                let arc_num_samples_accumulated = wgpu_state.arc_num_samples_accumulated[i].clone();
+                thread::spawn(move || {
+                    let mut prng = SFC32::<u32>::seed(i as u32);
+                    let rows = i*rows_per_worker..(i+1)*rows_per_worker;
+                    
+                    for i in 0..MAX_ACCUMULATE_STEPS {
+                        raytracer.raytrace_step(rows.clone(), acc_slice, &mut prng);
+                        arc_num_samples_accumulated.store(i+1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }); 
+            }
         }
 
         wgpu_state
@@ -313,29 +331,25 @@ impl WgpuState {
             self.raytrace_start_time = Some(std::time::Instant::now());
         }
 
-        // Do the raytrace, one ray per pixel
-        // https://docs.amd.com/r/en-US/57368-uProf-user-guide/11.1.5.1.-Group2
-        
-        let mut accumulated_samples;
-        if IS_SIMD {
-            accumulated_samples = self.raytracer_simd.raytrace_step(&mut *self.texture_data);
-        } else {
-            accumulated_samples = self.num_samples_accumulated_scalar[0].load(std::sync::atomic::Ordering::Relaxed);
+        let mut accumulated_samples = self.arc_num_samples_accumulated[0].load(std::sync::atomic::Ordering::Relaxed);
+        if !IS_SIMD {
+            // for non-SIMD, the accumulated samples number displayed is from the thread with the fewest samples outputted so far
+            accumulated_samples = self.arc_num_samples_accumulated[0].load(std::sync::atomic::Ordering::Relaxed);
             for i in 1..NUM_WORKERS_SCALAR {
-                let val = self.num_samples_accumulated_scalar[i].load(std::sync::atomic::Ordering::Relaxed);
+                let val = self.arc_num_samples_accumulated[i].load(std::sync::atomic::Ordering::Relaxed);
                 if val < accumulated_samples {
                     accumulated_samples = val;
                 }
             }
+        }
 
-            // multithreaded scalar raytracing, frontend converts [Bgraf32] buffer into [u8] buffer
-            for (i, bgraf32) in self.accumulator_buf_scalar.iter().enumerate() {
-                let converted = bgraf32.div_scalar(accumulated_samples as f32).to_bgra8888();
-                self.texture_data[i*4+0] = converted[0];  
-                self.texture_data[i*4+1] = converted[1];  
-                self.texture_data[i*4+2] = converted[2];  
-                self.texture_data[i*4+3] = converted[3];  
-            }
+        // frontend converts [Bgraf32] buffer into [u8] buffer
+        for (i, bgraf32) in self.accumulator_buf.iter().enumerate() {
+            let converted = bgraf32.div_scalar(accumulated_samples as f32).to_bgra8888();
+            self.texture_data[i*4+0] = converted[0];  
+            self.texture_data[i*4+1] = converted[1];  
+            self.texture_data[i*4+2] = converted[2];  
+            self.texture_data[i*4+3] = converted[3];  
         }
 
         if accumulated_samples == MAX_ACCUMULATE_STEPS && self.raytrace_finish_time.is_none() {
@@ -384,8 +398,7 @@ impl WgpuState {
 
     fn statusline(&self) -> String {
         if IS_SIMD {
-            let lanes_active_pct = self.raytracer_simd.lanes_active * 100 / self.raytracer_simd.lanes_computed;
-            return format!(" {}% lane util", lanes_active_pct);
+            return format!(" {}% lane util", self.arc_lanes_active_pct.load(std::sync::atomic::Ordering::Relaxed));
         } else {
             return "".to_string();
         }

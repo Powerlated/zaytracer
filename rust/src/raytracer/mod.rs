@@ -20,7 +20,7 @@ pub const ENABLE_JITTER: bool = true;
 
 pub const FORCE_HIDPI: bool = true;
 
-pub const NUM_WORKERS_SCALAR: usize = 8;
+pub const NUM_WORKERS_SCALAR: usize = 16;
 
 pub type RaytracerTexBuf = [u8; WIDTH*HEIGHT*4];
 pub type RaytracerBuf = [Bgraf32; WIDTH*HEIGHT];

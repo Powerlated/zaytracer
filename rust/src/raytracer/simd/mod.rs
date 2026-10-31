@@ -226,9 +226,6 @@ pub struct RaytracerSimd<const REBUNDLE_BELOW: u32> {
     random_unit_vector_gen: RandomUnitVectorGenerator,
     geos: Vec<TriSimd>,
     intermediate_buf: Bgra<Box<[f32; INTERMEDIATE_BUF_LEN]>>,
-    accumulator_buf: Bgra<Box<[f32; INTERMEDIATE_BUF_LEN]>>,
-    accumulate_steps: u32,
-
     secondary_buf: SecondaryBuffer,
 
     pub lanes_active: u64,
@@ -270,13 +267,6 @@ impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
             )),
             random_unit_vector_gen: RandomUnitVectorGenerator::new(),
             geos,
-            accumulator_buf: Bgra::<Box::<[f32; INTERMEDIATE_BUF_LEN]>> { val: [
-                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
-                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
-                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
-                vecboxslice::<INTERMEDIATE_BUF_LEN, _>(0.0),
-            ]},
-            accumulate_steps: 0,
 
             lanes_active: 0,
             lanes_computed: 0,
@@ -292,86 +282,59 @@ impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
         }
     }
 
-    pub fn raytrace_to_completion(&mut self, buf: &mut RaytracerTexBuf) {
-        while self.accumulate_steps < MAX_ACCUMULATE_STEPS {
-            self.raytrace_step(buf);
-        }
-    }
-
     #[inline(never)]
-    pub fn raytrace_step(&mut self, buf: &mut RaytracerTexBuf) -> u32 {
-        if self.accumulate_steps < MAX_ACCUMULATE_STEPS {
-            // **Send out primary rays**
-            for row in 0..HEIGHT {
-                // map row to normalized y coordinates
-                //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
-                //      and z points into the screen, away from the viewer.)
+    pub fn raytrace_step(&mut self, accumulator_buf: &mut [Bgraf32]) {
+        // **Send out primary rays**
+        for row in 0..HEIGHT {
+            // map row to normalized y coordinates
+            //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
+            //      and z points into the screen, away from the viewer.)
 
-                for col_stepped in (0..WIDTH).step_by(16) {
-                    // **First, trace one ray per pixel, and then update the accumulator
-                    // buffer with the cumulative average.**
+            for col_stepped in (0..WIDTH).step_by(16) {
+                // **First, trace one ray per pixel, and then update the accumulator
+                // buffer with the cumulative average.**
 
-                    let col_offs = U32x16::from(&std::array::from_fn::<_, 16, _>(|i| i as u32));
-                    let col = U32x16::from(col_stepped as u32) + col_offs;
+                let col_offs = U32x16::from(&std::array::from_fn::<_, 16, _>(|i| i as u32));
+                let col = U32x16::from(col_stepped as u32) + col_offs;
 
-                    let mut row_jittered = F32x16::from(row as f32);
-                    let mut col_jittered = F32x16::from(col);
-                    if ENABLE_JITTER {
-                        let jitter = random_jitter(&mut self.main_prng);
-                        row_jittered = row_jittered + jitter.0;
-                        col_jittered = col_jittered + jitter.1;
-                    }
-
-                    pub fn map_range(s: F32x16, a1: f32, a2: f32, b1: f32, b2: f32) -> F32x16 {
-                        // original: b1 + (s - a1) * (b2 - b1) / (a2 - a1)
-                        //                           <-------const------->
-                        return F32x16::mul_add(s - F32x16::splat(a1), 
-                                               F32x16::splat((b2 - b1) / (a2 - a1)), 
-                                               F32x16::splat(b1));
-                    }
-
-                    let norm_y = map_range(row_jittered, 0.0, HEIGHT as f32 - 1.0, -1.0, 1.0);
-                    let norm_x = map_range(col_jittered, 0.0, WIDTH as f32 - 1.0, -1.0, 1.0);
-
-                    self.zaytrace_primary_rays(norm_x, norm_y, row as u32, col, col_stepped as u32);
+                let mut row_jittered = F32x16::from(row as f32);
+                let mut col_jittered = F32x16::from(col);
+                if ENABLE_JITTER {
+                    let jitter = random_jitter(&mut self.main_prng);
+                    row_jittered = row_jittered + jitter.0;
+                    col_jittered = col_jittered + jitter.1;
                 }
-            }
 
-            self.zaytrace_secondary_rays();
-
-            unsafe {
-                // **Accumulate intermediate buffer into accumulator buffer**
-                for i in (0..INTERMEDIATE_BUF_LEN).step_by(16) {
-                    let b_inter_ptr = self.intermediate_buf.val[0].as_mut_ptr().add(i);
-                    let g_inter_ptr = self.intermediate_buf.val[1].as_mut_ptr().add(i);
-                    let r_inter_ptr = self.intermediate_buf.val[2].as_mut_ptr().add(i);
-                    let b_acc_ptr = self.accumulator_buf.val[0].as_mut_ptr().add(i);
-                    let g_acc_ptr = self.accumulator_buf.val[1].as_mut_ptr().add(i);
-                    let r_acc_ptr = self.accumulator_buf.val[2].as_mut_ptr().add(i);
-
-                    F32x16::store(b_acc_ptr, F32x16::load(b_inter_ptr) + F32x16::load(b_acc_ptr));
-                    F32x16::store(g_acc_ptr, F32x16::load(g_inter_ptr) + F32x16::load(g_acc_ptr));
-                    F32x16::store(r_acc_ptr, F32x16::load(r_inter_ptr) + F32x16::load(r_acc_ptr));
+                pub fn map_range(s: F32x16, a1: f32, a2: f32, b1: f32, b2: f32) -> F32x16 {
+                    // original: b1 + (s - a1) * (b2 - b1) / (a2 - a1)
+                    //                           <-------const------->
+                    return F32x16::mul_add(s - F32x16::splat(a1), 
+                                            F32x16::splat((b2 - b1) / (a2 - a1)), 
+                                            F32x16::splat(b1));
                 }
-            }
 
-            // convert accumulator buffer into output buffer
-            for i in 0..ACCUMULATOR_BUF_LEN {
-                let converted = Bgraf32::from_rgb_f32(self.accumulator_buf.val[2][i],
-                                                      self.accumulator_buf.val[1][i],
-                                                      self.accumulator_buf.val[0][i])
-                                                      .mul_scalar(1. / self.accumulate_steps as f32)
-                                                      .to_bgra8888();
-                buf[i*4+0] = converted[0]; 
-                buf[i*4+1] = converted[1];
-                buf[i*4+2] = converted[2];
-                buf[i*4+3] = 0xFF;
-            }
+                let norm_y = map_range(row_jittered, 0.0, HEIGHT as f32 - 1.0, -1.0, 1.0);
+                let norm_x = map_range(col_jittered, 0.0, WIDTH as f32 - 1.0, -1.0, 1.0);
 
-            self.accumulate_steps += 1;
+                self.zaytrace_primary_rays(norm_x, norm_y, row as u32, col, col_stepped as u32);
+            }
         }
 
-        return self.accumulate_steps;
+        self.zaytrace_secondary_rays();
+
+        // **Accumulate intermediate buffer into accumulator buffer**
+        for i in 0..INTERMEDIATE_BUF_LEN {
+            let inter_b = self.intermediate_buf.val[0][i];
+            let inter_g = self.intermediate_buf.val[1][i];
+            let inter_r = self.intermediate_buf.val[2][i];
+
+            let new_px = Bgraf32::from_rgb_f32(inter_r, 
+                                                inter_g,
+                                                inter_b);
+
+            let acc_px = &mut accumulator_buf[i];
+            *acc_px = (*acc_px).add(new_px);
+        }
     }
 
     // `norm_x` and `norm_y` are Vulkan-style normalized
