@@ -19,5 +19,8 @@ pub const ENABLE_JITTER: bool = true;
 pub const FORCE_HIDPI: bool = true;
 
 pub type RaytracerBuf = [u8; BUF_SIZE];
+pub fn new_raytracer_buf() -> Box<RaytracerBuf> {
+    return vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice().try_into().unwrap();
+}
 
 pub const NUM_WORKERS_SCALAR: usize = 8;

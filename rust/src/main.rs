@@ -3,15 +3,20 @@
 #![allow(incomplete_features)]
 #![feature(pointer_is_aligned_to)]
 
-use std::sync::Arc;
+use std::ops::DerefMut;
+use std::sync::atomic::AtomicU32;
+use std::sync::{Arc, Mutex};
 
 use std::borrow::Cow;
+use std::thread;
+use std::time::Instant;
 use wgpu::Extent3d;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
+use crate::raytracer::{RaytracerBuf, new_raytracer_buf};
 use crate::raytracer::NUM_WORKERS_SCALAR;
 use crate::raytracer::{FORCE_HIDPI, HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
 use crate::raytracer::simd::*;
@@ -21,6 +26,9 @@ use ::raytracer::GIT_HASH_AND_DIRTY_STR;
 const IS_SIMD: bool = false;
 #[cfg(not(feature = "no_simd"))]
 const IS_SIMD: bool = true;
+
+const SAMPLES_PER_WORKER: usize = MAX_ACCUMULATE_STEPS as usize / NUM_WORKERS_SCALAR; 
+const _: () = assert!(MAX_ACCUMULATE_STEPS as usize % NUM_WORKERS_SCALAR == 0);
 
 mod raytracer;
 
@@ -37,12 +45,14 @@ struct WgpuState {
     surface_format: wgpu::TextureFormat,
     render_pipeline: wgpu::RenderPipeline,
 
-    texture_data: Box<[u8]>,
-    texture_data_scalar: [Box<[u8]>; NUM_WORKERS_SCALAR],
+    texture_data: Box<RaytracerBuf>,
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
+    
+    raytracer_scalar: [Arc<Mutex<raytracer::scalar::RaytracerScalar>>; NUM_WORKERS_SCALAR],
+    scalar_accumulated_samples: Arc<AtomicU32>,
+    texture_data_scalar: [Arc<Mutex<RaytracerBuf>>; NUM_WORKERS_SCALAR],
 
-    raytracer_scalar: raytracer::scalar::RaytracerScalar,
     raytracer_simd: raytracer::simd::RaytracerSimd<14>,
 
     raytrace_start_time: Option<std::time::Instant>,
@@ -200,7 +210,7 @@ impl WgpuState {
             cache: None,
         });
 
-        WgpuState {
+        let wgpu_state = WgpuState {
             instance,
             arc_window,
             device,
@@ -210,26 +220,35 @@ impl WgpuState {
             surface_format,
             render_pipeline,
 
-            texture_data: vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-            texture_data_scalar: [
-                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
-            ],
+            texture_data: new_raytracer_buf(),
+            texture_data_scalar: core::array::from_fn(|_| Arc::new(Mutex::from(*new_raytracer_buf()))),
             texture,
             texture_bind_group,
 
-            raytracer_scalar: RaytracerScalar::new(),
-            raytracer_simd: RaytracerSimd::<14>::from_scalar(RaytracerScalar::new()),
+            raytracer_scalar: core::array::from_fn(|i| Arc::new(Mutex::from(RaytracerScalar::new_with_seed(i as u32)))),
+            scalar_accumulated_samples: Arc::new(AtomicU32::new(0)),
+            raytracer_simd: RaytracerSimd::<14>::from_scalar(RaytracerScalar::new_with_seed(0)),
 
             raytrace_start_time: None,
             raytrace_finish_time: None,
+        };
+
+        for i in 0..NUM_WORKERS_SCALAR {
+            let texture_data = wgpu_state.texture_data_scalar[i].clone();
+            let raytracer = wgpu_state.raytracer_scalar[i].clone();
+            let accumulated_samples = wgpu_state.scalar_accumulated_samples.clone();
+            thread::spawn(move || {
+                for _ in 0..SAMPLES_PER_WORKER {
+                    let mut guard = texture_data.lock().unwrap();
+                    let buf = guard.deref_mut();
+                    
+                    raytracer.lock().unwrap().raytrace_step(buf);
+                    accumulated_samples.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }); 
         }
+
+        wgpu_state
     }
 
     fn render(&mut self) {
@@ -284,14 +303,12 @@ impl WgpuState {
 
         // Do the raytrace, one ray per pixel
         // https://docs.amd.com/r/en-US/57368-uProf-user-guide/11.1.5.1.-Group2
-        let unboxed = &mut *self.texture_data;
-        let as_array = unboxed.try_into().unwrap();
         
         let accumulated_samples;
         if IS_SIMD {
-            accumulated_samples = self.raytracer_simd.raytrace_step(as_array);
+            accumulated_samples = self.raytracer_simd.raytrace_step(&mut *self.texture_data);
         } else {
-            accumulated_samples = self.raytracer_scalar.raytrace_step(as_array);
+            accumulated_samples = self.scalar_accumulated_samples.load(std::sync::atomic::Ordering::Relaxed);
         }
 
         if accumulated_samples == MAX_ACCUMULATE_STEPS && self.raytrace_finish_time.is_none() {
@@ -322,7 +339,7 @@ impl WgpuState {
 
         self.queue.write_texture(
             self.texture.as_image_copy(),
-            &self.texture_data,
+            &*self.texture_data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(TEXTURE_FORMAT.theoretical_memory_footprint(Extent3d { width: WIDTH as u32, height: 1, depth_or_array_layers: 1 }) as u32),
@@ -396,15 +413,19 @@ impl ApplicationHandler for App {
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     
-    // Move this thread onto the highest-numbered logical core
-    let core_ids = core_affinity::get_core_ids().unwrap();
-    core_affinity::set_for_current(*core_ids.last().unwrap());
-    
-    // Set this thread to high priority
-    thread_priority::set_winapi_thread_priority(
-        thread_priority::thread_native_id(), 
-        thread_priority::WinAPIThreadPriority::Highest
-    ).unwrap();
+    // TODO for multithreaded non-SIMD
+    #[cfg(not(feature = "no_simd"))]
+    {
+        // Move this thread onto the highest-numbered logical core
+        let core_ids = core_affinity::get_core_ids().unwrap();
+        core_affinity::set_for_current(*core_ids.last().unwrap());
+        
+        // Set this thread to high priority
+        thread_priority::set_winapi_thread_priority(
+            thread_priority::thread_native_id(), 
+            thread_priority::WinAPIThreadPriority::Highest
+        ).unwrap();
+    }
 
     // ControlFlow::Poll continuously runs the event loop, even if the OS hasn't
     // dispatched any events. This is ideal for games and similar applications.

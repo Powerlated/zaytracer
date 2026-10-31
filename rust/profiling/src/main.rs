@@ -4,7 +4,7 @@
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-use raytracer::raytracer::{HEIGHT, Raytracer, RaytracerBuf, WIDTH};
+use raytracer::raytracer::{HEIGHT, RaytracerBuf, WIDTH};
 use raytracer::raytracer::scalar::RaytracerScalar;
 use raytracer::raytracer::simd::RaytracerSimd;
 
@@ -19,7 +19,7 @@ fn main() {
         thread_priority::WinAPIThreadPriority::Highest
     ).unwrap();
 
-    let raytracer = RaytracerScalar::new();
+    let raytracer = RaytracerScalar::new_with_seed(0);
 
     #[cfg(not(feature = "no_simd"))]
     let mut raytracer = RaytracerSimd::<14>::from_scalar(raytracer);

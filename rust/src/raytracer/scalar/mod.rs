@@ -65,10 +65,10 @@ pub struct RaytracerScalar {
 }
 
 impl RaytracerScalar {
-    pub fn new() -> Self {
+    pub fn new_with_seed(seed: u32) -> Self {
         let mut raytracer = Self {
-            // start the PRNGs from 0 seed always
-            main_prng: SFC32::<u32>::seed(0),
+            // start the PRNGs from consistent seed always
+            main_prng: SFC32::<u32>::seed(seed),
             geos: Vec::new(),
             accumulator_buf: vec![Bgraf32::zero(); HEIGHT * WIDTH as usize].into_boxed_slice(),
             accumulate_steps: 0,
