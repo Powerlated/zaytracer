@@ -210,7 +210,7 @@ impl Bgraf32 {
         return Bgra { val: [0., 0., 0., 0.] };
     }
 
-    pub fn to_argb8888(self) -> [u8; 4] {
+    pub fn to_bgra8888(self) -> [u8; 4] {
         return [Self::color_f32_to_255(self.val[0]),
                 Self::color_f32_to_255(self.val[1]),
                 Self::color_f32_to_255(self.val[2]),

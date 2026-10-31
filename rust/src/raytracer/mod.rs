@@ -1,3 +1,5 @@
+use crate::raytracer::math::Bgraf32;
+
 pub mod scalar;
 pub mod simd;
 pub mod math;
@@ -18,9 +20,10 @@ pub const ENABLE_JITTER: bool = true;
 
 pub const FORCE_HIDPI: bool = true;
 
-pub type RaytracerBuf = [u8; BUF_SIZE];
-pub fn new_raytracer_buf() -> Box<RaytracerBuf> {
-    return vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice().try_into().unwrap();
-}
-
 pub const NUM_WORKERS_SCALAR: usize = 8;
+
+pub type RaytracerTexBuf = [u8; WIDTH*HEIGHT*4];
+pub type RaytracerBuf = [Bgraf32; WIDTH*HEIGHT];
+pub fn new_raytracer_buf() -> Box<RaytracerBuf> {
+    return vec![Bgraf32::zero(); WIDTH*HEIGHT].into_boxed_slice().try_into().unwrap();
+}

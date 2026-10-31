@@ -58,20 +58,13 @@ fn random_alpha(prng: &mut SFC32::<u32>) -> f32 {
 }
 
 pub struct RaytracerScalar {
-    pub main_prng: SFC32::<u32>,
     pub geos: Vec<Geo>,
-    pub accumulator_buf: Box<[Bgraf32]>,
-    pub accumulate_steps: u32,
 }
 
 impl RaytracerScalar {
-    pub fn new_with_seed(seed: u32) -> Self {
+    pub fn new() -> Self {
         let mut raytracer = Self {
-            // start the PRNGs from consistent seed always
-            main_prng: SFC32::<u32>::seed(seed),
             geos: Vec::new(),
-            accumulator_buf: vec![Bgraf32::zero(); HEIGHT * WIDTH as usize].into_boxed_slice(),
-            accumulate_steps: 0,
         };
 
         let mut light = square(1., TriShader::Material(MaterialShader::new_emissive(1., 1., 1., 7.)));
@@ -115,74 +108,35 @@ impl RaytracerScalar {
         }
     }
 
-    fn update_and_dither_output_buffer(&mut self, buf: &mut RaytracerBuf) {
-        let mut dither_prng = SFC32::<u32>::seed(0);
+    pub fn raytrace_step(&self, rows: std::ops::Range<usize>, accumulator_buf: &mut [Bgraf32], prng: &mut SFC32::<u32>) {
+        for (row_i, row) in rows.enumerate() {
+            // map row to normalized y coordinates
+            //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
+            //      and z points into the screen, away from the viewer.)
 
-        for row in 0..HEIGHT {
             for col in 0..WIDTH {
-                // prng.next_u32() returns integer with uniform distribution in the entire u32 domain
-                let int = dither_prng.next_u32();
+                // **First, trace one ray per pixel, and then update the accumulator
+                // buffer with the cumulative average.**
 
-                let uniform_rect_dist = ((int as f32) / (0xFFFFFFFFu32 as f32) - 0.5)
-                                        * (1. / (DITHER_DIVISOR as f32));
+                let jitter = random_jitter(prng);
+                let row_jittered = (row as f32) + jitter.0;
+                let col_jittered = (col as f32) + jitter.1;
 
-                let scaled = self.accumulator_buf[row * WIDTH + col]
-                            .div_scalar(self.accumulate_steps as f32);
+                let norm_y = map_range(row_jittered, 0., (HEIGHT - 1) as f32, -1., 1.);
+                let norm_x = map_range(col_jittered, 0., (WIDTH - 1) as f32, -1., 1.);
 
-                let dithered = scaled.add(Bgraf32 {val: [
-                    uniform_rect_dist,
-                    uniform_rect_dist,
-                    uniform_rect_dist,
-                    0.0,
-                ]});
-
-                let buf_offset = row * STRIDE + col * BYTES_PER_PIXEL;
-                let px: &mut [u8; 4] = (&mut buf[buf_offset..buf_offset+BYTES_PER_PIXEL])
-                                        .try_into().unwrap();
-
-                *px = dithered.to_argb8888();
+                // perform antialiasing accumulate
+                let new_px = self.zaytrace_image_inner(prng, norm_x, norm_y);
+                let acc_px = &mut accumulator_buf[row_i * WIDTH + col];
+                *acc_px = (*acc_px).add(new_px);
             }
-        }   
-    }
-
-    pub fn raytrace_step(&mut self, buf: &mut RaytracerBuf) -> u32 {
-        if self.accumulate_steps < MAX_ACCUMULATE_STEPS  {
-            for row in 0..HEIGHT {
-                // map row to normalized y coordinates
-                //     (Vulkan style, [-1, -1] xy is the top left corner of the screen,
-                //      and z points into the screen, away from the viewer.)
-
-                for col in 0..WIDTH {
-                    // **First, trace one ray per pixel, and then update the accumulator
-                    // buffer with the cumulative average.**
-
-                    let jitter = random_jitter(&mut self.main_prng);
-                    let row_jittered = (row as f32) + jitter.0;
-                    let col_jittered = (col as f32) + jitter.1;
-
-                    let norm_y = map_range(row_jittered, 0., (HEIGHT - 1) as f32, -1., 1.);
-                    let norm_x = map_range(col_jittered, 0., (WIDTH - 1) as f32, -1., 1.);
-
-                    // perform antialiasing accumulate
-                    let new_px = self.zaytrace_image_inner(norm_x, norm_y);
-                    let acc_px = &mut self.accumulator_buf[row * WIDTH + col];
-                    *acc_px = (*acc_px).add(new_px);
-                }
-            }
-
-            // **Then, update the output buffer while dithering it.**
-            self.accumulate_steps += 1;
-            self.update_and_dither_output_buffer(buf);
-
         }
-
-        return self.accumulate_steps;
     }
 
     // `norm_x` and `norm_y` are Vulkan-style normalized
     // device coordinates, where the top left of the screen
     // is (-1, -1) and the bottom right is (1, 1).
-    fn zaytrace_image_inner(&mut self, norm_x: f32, flipped_norm_y: f32) -> Bgraf32 {
+    fn zaytrace_image_inner(&self, prng: &mut SFC32::<u32>, norm_x: f32, flipped_norm_y: f32) -> Bgraf32 {
         // Flip y to make y up
         let norm_y = flipped_norm_y * -1.;
 
@@ -201,11 +155,11 @@ impl RaytracerScalar {
         let ray_pos = Vec3f32::from_xyz(0., 0., -2.);
         let ray_dir = Vec3f32::from_xyz(x_dir_unnormalized, y_dir_unnormalized, 1.).normalize();
 
-        return self.zaytrace_ray(None, ray_pos, ray_dir, 0);
+        return self.zaytrace_ray(prng, None, ray_pos, ray_dir, 0);
     }
 
     // **Inner raytracing loop** :D
-    fn zaytrace_ray(&mut self, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3f32, ray_dir: Vec3f32, bounces: u8) -> Bgraf32 {
+    fn zaytrace_ray(&self, prng: &mut SFC32::<u32>, maybe_origin_geo_id: Option<GeoId>, ray_pos: Vec3f32, ray_dir: Vec3f32, bounces: u8) -> Bgraf32 {
         if bounces > MAX_BOUNCES  { return Bgraf32::from_rgb_f32(0., 0., 0.); }
 
         let mut closest_inter_t: f32 = 1000.0;
@@ -230,7 +184,7 @@ impl RaytracerScalar {
                                         let colors = per_vertex.colors;
                                         let a = w * colors[0][3] + v * colors[1][3] + u * colors[2][3];
 
-                                        if a > random_alpha(&mut self.main_prng)  {
+                                        if a > random_alpha(prng) {
                                             continue;
                                         }
                                     },
@@ -303,7 +257,7 @@ impl RaytracerScalar {
 
                                 // **Lambertian diffuse bounce**
                                 // get a random point on the unit sphere around the hit location
-                                let point_on_sphere = closest_inter.p.add(random_unit_vector(&mut self.main_prng));
+                                let point_on_sphere = closest_inter.p.add(random_unit_vector(prng));
                                 // shift that point 1 unit away from the hit point along the normal vector
                                 let point_on_sphere_shifted = point_on_sphere.add(n);
                                 let lambertian_ray_dir = point_on_sphere_shifted.sub(closest_inter.p).normalize();
@@ -311,7 +265,7 @@ impl RaytracerScalar {
 
                                 // assert(bounce_dir.dot(n) > 0);
                                 return material.color
-                                    .mul_elementwise(self.zaytrace_ray(maybe_closest_inter_geo_id, closest_inter.p, lambertian_ray_dir, bounces + 1));
+                                    .mul_elementwise(self.zaytrace_ray(prng, maybe_closest_inter_geo_id, closest_inter.p, lambertian_ray_dir, bounces + 1));
                                     // .mul_scalar(lambertian_scalar);
                             }
                         },
@@ -324,7 +278,7 @@ impl RaytracerScalar {
     }
 }
 
-// pub fn rainbow(buf: &RaytracerBuf) {
+// pub fn rainbow(buf: &RaytracerScalarBuf) {
 //     for (row, row_pixels) in buf.iter_mut().enumerate() {
 //         // map row to normalized y coordinates
 //         //     (Vulkan style, [-1, -1] xy is the top left corner of the screen)

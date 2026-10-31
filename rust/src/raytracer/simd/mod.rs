@@ -292,104 +292,14 @@ impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
         }
     }
 
-    #[inline]
-    fn update_and_dither_output_buffer(&mut self, buf: &mut RaytracerBuf) {
-        let inv_accumulate_steps = 1. / self.accumulate_steps as f32;
-
-        // TODO: dithering
-        // step by 16 pixels at a time
-        for i in (0..ACCUMULATOR_BUF_LEN).step_by(16) {
-            // TODO: Vectorize this
-            for j in 0..16 {
-                // 4 bytes per pixel in output buffer
-                let offs = i+j;
-                let offs_out = offs*4;
-                let out_pixel = &mut buf[offs_out..offs_out+4];
-                let in_b = self.accumulator_buf.val[0][offs] * inv_accumulate_steps; 
-                let in_g = self.accumulator_buf.val[1][offs] * inv_accumulate_steps; 
-                let in_r = self.accumulator_buf.val[2][offs] * inv_accumulate_steps; 
-                out_pixel[0] = in_b.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                out_pixel[1] = in_g.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                out_pixel[2] = in_r.clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                out_pixel[3] = 0xFF;
-            }
-        }
-
-        // let mut dither_prng =
-            // Xoshiro128PlusPlusSimd::<16>::seed_from_u64(u64x16::from(std::array::from_fn::<u64, 16, _,>(|i| i as u64)));
-
-        // 16 pixels
-        // let out_buf: &mut [[u8; 16 * 4]] = bytemuck::cast_slice_mut(buf);
-        // // An Rgbf32::<F32x16> is 16 pixels
-
-        // // 16 pixels per iteration
-        // for (acc, out) in self.accumulator_buf.iter().zip(out_buf.iter_mut()) {
-        //     let int = dither_prng.next_u32();
-
-        //     let uniform_rect_dist =
-        //         (F32x16::from(int) / (0xFFFFFFFFu32 as f32) - 0.5) * (1. / (DITHER_DIVISOR as f32));
-
-        //     let inv_accumulate_steps: F32x16 = (1.0 / self.accumulate_steps as f32).into();
-        //     let dithered_f32_b = acc.val[0] * inv_accumulate_steps + uniform_rect_dist;
-        //     let dithered_f32_g = acc.val[1] * inv_accumulate_steps + uniform_rect_dist;
-        //     let dithered_f32_r = acc.val[2] * inv_accumulate_steps + uniform_rect_dist;
-        //     let scaled_f32_a = acc.val[3] * inv_accumulate_steps;
-
-        //     // // Construct the first 4 pixels in f32
-        //     // unsafe {
-        //     //     // Construct BG
-        //     //     // let permute = _mm512_permutex2var_ps;
-        //     //     // idx[i+3:i] is the index into the source vectors
-        //     //     // idx[i+4] should be 1 to select b
-        //     //     let indices: [u8; 16] = [
-        //     //         0,
-        //     //         0,
-        //     //         0b00000,
-        //     //         0b10000,
-        //     //         0,
-        //     //         0,
-        //     //         0b00001,
-        //     //         0b10001,
-        //     //         0,
-        //     //         0,
-        //     //         0b00010,
-        //     //         0b10010,
-        //     //         0,
-        //     //         0,
-        //     //         0b00011,
-        //     //         0b10011,
-        //     //     ];
-        //     //     let indices = _mm_loadu_epi8(indices.as_ptr() as *const i8);
-        //     //     let indices = _mm512_cvtepi8_epi32(indices);
-        //     //     let mask: u16 = 0b1100110011001100;
-        //     //     _mm512_mask2_permutex2var_ps(dithered_f32_b.0, indices, mask, dithered_f32_g.0);
-        //     // }
-
-        //     let dithered_f32_b_arr: [f32; 16] = dithered_f32_b.into();
-        //     let dithered_f32_g_arr: [f32; 16] = dithered_f32_g.into();
-        //     let dithered_f32_r_arr: [f32; 16] = dithered_f32_r.into();
-
-        //     // TODO: Vectorize this
-        //     for i in 0..16 {
-        //         let out_pixel = &mut out[i * 4..i * 4 + 4];
-        //         out_pixel[0] = ((dithered_f32_b_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-        //         out_pixel[1] = ((dithered_f32_g_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-        //         out_pixel[2] = ((dithered_f32_r_arr[i].clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-        //         out_pixel[3] = 0xFF;
-        //     }
-
-        //     // let color_255: U8x16 = ((dithered_f32.clamp(0.0, 1.0) * 255.0) + 0.5).into();
-        // }
-    }
-
-    pub fn raytrace_to_completion(&mut self, buf: &mut RaytracerBuf) {
+    pub fn raytrace_to_completion(&mut self, buf: &mut RaytracerTexBuf) {
         while self.accumulate_steps < MAX_ACCUMULATE_STEPS {
             self.raytrace_step(buf);
         }
     }
 
     #[inline(never)]
-    pub fn raytrace_step(&mut self, buf: &mut RaytracerBuf) -> u32 {
+    pub fn raytrace_step(&mut self, buf: &mut RaytracerTexBuf) -> u32 {
         if self.accumulate_steps < MAX_ACCUMULATE_STEPS {
             // **Send out primary rays**
             for row in 0..HEIGHT {
@@ -445,9 +355,7 @@ impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
                 }
             }
 
-            // **Then, update the output buffer while dithering it.**
             self.accumulate_steps += 1;
-            self.update_and_dither_output_buffer(buf);
         }
 
         return self.accumulate_steps;
