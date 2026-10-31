@@ -1,5 +1,4 @@
 #![feature(portable_simd)]
-#![feature(explicit_tail_calls)]
 #![feature(adt_const_params)]
 #![allow(incomplete_features)]
 #![feature(pointer_is_aligned_to)]
@@ -8,16 +7,20 @@ use std::sync::Arc;
 
 use std::borrow::Cow;
 use wgpu::Extent3d;
-use wgpu::TextureFormat::Bgra8UnormSrgb;
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
+use crate::raytracer::NUM_WORKERS_SCALAR;
 use crate::raytracer::{FORCE_HIDPI, HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
 use crate::raytracer::simd::*;
 use ::raytracer::GIT_HASH_AND_DIRTY_STR;
+
+#[cfg(feature = "no_simd")]
+const IS_SIMD: bool = false;
+#[cfg(not(feature = "no_simd"))]
+const IS_SIMD: bool = true;
 
 mod raytracer;
 
@@ -35,13 +38,12 @@ struct WgpuState {
     render_pipeline: wgpu::RenderPipeline,
 
     texture_data: Box<[u8]>,
+    texture_data_scalar: [Box<[u8]>; NUM_WORKERS_SCALAR],
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
 
-    #[cfg(feature = "no_simd")]
-    raytracer: raytracer::scalar::RaytracerScalar,
-    #[cfg(not(feature = "no_simd"))]
-    raytracer: raytracer::simd::RaytracerSimd<14>,
+    raytracer_scalar: raytracer::scalar::RaytracerScalar,
+    raytracer_simd: raytracer::simd::RaytracerSimd<14>,
 
     raytrace_start_time: Option<std::time::Instant>,
     raytrace_finish_time: Option<std::time::Instant>,
@@ -209,13 +211,21 @@ impl WgpuState {
             render_pipeline,
 
             texture_data: vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+            texture_data_scalar: [
+                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+                vec![0u8; WIDTH * 4 * HEIGHT].into_boxed_slice(),
+            ],
             texture,
             texture_bind_group,
 
-            #[cfg(feature = "no_simd")]
-            raytracer: RaytracerScalar::new(),
-            #[cfg(not(feature = "no_simd"))]
-            raytracer: RaytracerSimd::from_scalar(RaytracerScalar::new()),
+            raytracer_scalar: RaytracerScalar::new(),
+            raytracer_simd: RaytracerSimd::<14>::from_scalar(RaytracerScalar::new()),
 
             raytrace_start_time: None,
             raytrace_finish_time: None,
@@ -276,7 +286,13 @@ impl WgpuState {
         // https://docs.amd.com/r/en-US/57368-uProf-user-guide/11.1.5.1.-Group2
         let unboxed = &mut *self.texture_data;
         let as_array = unboxed.try_into().unwrap();
-        let accumulated_samples = self.raytracer.raytrace_step(as_array);
+        
+        let accumulated_samples;
+        if IS_SIMD {
+            accumulated_samples = self.raytracer_simd.raytrace_step(as_array);
+        } else {
+            accumulated_samples = self.raytracer_scalar.raytrace_step(as_array);
+        }
 
         if accumulated_samples == MAX_ACCUMULATE_STEPS && self.raytrace_finish_time.is_none() {
             self.raytrace_finish_time = Some(std::time::Instant::now());
@@ -295,20 +311,13 @@ impl WgpuState {
             suffix = "".to_string();
         }
 
-        #[cfg(not(feature = "no_simd"))]
-        let lanes_active_pct = self.raytracer.lanes_active * 100 / self.raytracer.lanes_computed;
-        #[cfg(not(feature = "no_simd"))]
-        let lanes_active_pct_formatted = format!(" {}% lane util", lanes_active_pct);
-        #[cfg(feature = "no_simd")]
-        let lanes_active_pct_formatted = String::from("");
-
         self.arc_window.set_title(format!("Brian Jia - Raytracer{} [{}/{}]{}{}{}", 
             if cfg!(feature = "no_simd") { " Scalar" } else { " SIMD" },
             accumulated_samples,
             MAX_ACCUMULATE_STEPS,
             suffix,
-            lanes_active_pct_formatted.as_str(),
-            format!(" {}", GIT_HASH_AND_DIRTY_STR).as_str()
+            format!(" {}", GIT_HASH_AND_DIRTY_STR).as_str(),
+            self.statusline().as_str(),
         ).as_str());
 
         self.queue.write_texture(
@@ -327,6 +336,15 @@ impl WgpuState {
 
         self.arc_window.pre_present_notify();
         self.queue.present(surface_texture);
+    }
+
+    fn statusline(&self) -> String {
+        if IS_SIMD {
+            let lanes_active_pct = self.raytracer_simd.lanes_active * 100 / self.raytracer_simd.lanes_computed;
+            return format!(" {}% lane util", lanes_active_pct);
+        } else {
+            return "".to_string();
+        }
     }
 }
 

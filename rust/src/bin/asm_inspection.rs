@@ -1,6 +1,6 @@
 use std::hint::black_box;
 
-use raytracer::raytracer::{math::{Vec3, Vec3f32}, simd::avx512::F32x16};
+use raytracer::raytracer::math::Vec3f32;
 
 #[inline(never)]
 pub fn display(v: Vec3f32) {

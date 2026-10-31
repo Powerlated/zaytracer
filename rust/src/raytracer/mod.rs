@@ -19,3 +19,5 @@ pub const ENABLE_JITTER: bool = true;
 pub const FORCE_HIDPI: bool = true;
 
 pub type RaytracerBuf = [u8; BUF_SIZE];
+
+pub const NUM_WORKERS_SCALAR: usize = 8;

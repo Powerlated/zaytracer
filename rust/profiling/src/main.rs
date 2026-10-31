@@ -4,7 +4,7 @@
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-use raytracer::raytracer::{HEIGHT, RaytracerBuf, WIDTH};
+use raytracer::raytracer::{HEIGHT, Raytracer, RaytracerBuf, WIDTH};
 use raytracer::raytracer::scalar::RaytracerScalar;
 use raytracer::raytracer::simd::RaytracerSimd;
 
