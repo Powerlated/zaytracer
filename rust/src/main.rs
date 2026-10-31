@@ -2,6 +2,7 @@
 #![feature(adt_const_params)]
 #![allow(incomplete_features)]
 #![feature(pointer_is_aligned_to)]
+#![feature(mutex_data_ptr)]
 
 use std::ops::DerefMut;
 use std::sync::atomic::AtomicU32;
@@ -10,13 +11,13 @@ use std::sync::{Arc, Mutex};
 use std::borrow::Cow;
 use std::thread;
 use std::time::Instant;
-use wgpu::Extent3d;
+use wgpu::{Extent3d, Origin3d, TexelCopyTextureInfo, TextureAspect};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowButtons, WindowId};
 
-use crate::raytracer::{RaytracerBuf, new_raytracer_buf};
+use crate::raytracer::{BUF_SIZE, RaytracerBuf, new_raytracer_buf};
 use crate::raytracer::NUM_WORKERS_SCALAR;
 use crate::raytracer::{FORCE_HIDPI, HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
 use crate::raytracer::simd::*;
@@ -29,6 +30,12 @@ const IS_SIMD: bool = true;
 
 const SAMPLES_PER_WORKER: usize = MAX_ACCUMULATE_STEPS as usize / NUM_WORKERS_SCALAR; 
 const _: () = assert!(MAX_ACCUMULATE_STEPS as usize % NUM_WORKERS_SCALAR == 0);
+
+const SCREEN_EXTENT: Extent3d = Extent3d {
+    width: WIDTH as u32,
+    height: HEIGHT as u32,
+    depth_or_array_layers: 1, 
+};
 
 mod raytracer;
 
@@ -107,16 +114,16 @@ impl WgpuState {
             width: inner_size.width,
             height: inner_size.height,
             desired_maximum_frame_latency: 2,
-            present_mode: wgpu::PresentMode::AutoNoVsync,
+            present_mode: if IS_SIMD {wgpu::PresentMode::AutoNoVsync} else {wgpu::PresentMode::AutoVsync},
         });
 
         // *Texture setup for drawing raytraced image to screen*
         let texture = device.create_texture(&wgpu::wgt::TextureDescriptor { 
             label: None, 
             size: wgpu::Extent3d {
-                width: WIDTH as u32,
+                width: WIDTH as u32 * if IS_SIMD {1} else {NUM_WORKERS_SCALAR as u32},
                 height: HEIGHT as u32,
-                depth_or_array_layers: 1
+                depth_or_array_layers: 1,
             }, 
             mip_level_count: 1,
             sample_count: 1, 
@@ -243,6 +250,7 @@ impl WgpuState {
                     let buf = guard.deref_mut();
                     
                     raytracer.lock().unwrap().raytrace_step(buf);
+                    drop(guard);
                     accumulated_samples.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }); 
@@ -337,17 +345,44 @@ impl WgpuState {
             self.statusline().as_str(),
         ).as_str());
 
-        self.queue.write_texture(
-            self.texture.as_image_copy(),
-            &*self.texture_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(TEXTURE_FORMAT.theoretical_memory_footprint(Extent3d { width: WIDTH as u32, height: 1, depth_or_array_layers: 1 }) as u32),
-                rows_per_image: Some(HEIGHT as u32),
-            },
-            self.texture.size(),
-        );
-    
+        if IS_SIMD {
+            self.queue.write_texture(
+                self.texture.as_image_copy(),
+                &*self.texture_data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(TEXTURE_FORMAT.theoretical_memory_footprint(Extent3d { width: WIDTH as u32, height: 1, depth_or_array_layers: 1 }) as u32),
+                    rows_per_image: Some(HEIGHT as u32),
+                },
+                self.texture.size(),
+            );
+        } else {
+            for i in 0..NUM_WORKERS_SCALAR {
+                // TODO - make this safe.
+                let texture_data = self.texture_data_scalar[i].data_ptr();
+                let copy_info = TexelCopyTextureInfo {
+                    texture: &self.texture,
+                    mip_level: 0,
+                    origin: Origin3d {
+                        x: (WIDTH * i) as u32,
+                        y: 0,
+                        z: 0,
+                    },
+                    aspect: TextureAspect::All,
+                };
+                self.queue.write_texture(
+                    copy_info,
+                    unsafe { std::slice::from_raw_parts(texture_data as *const u8, BUF_SIZE) },
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(TEXTURE_FORMAT.theoretical_memory_footprint(Extent3d { width: WIDTH as u32, height: 1, depth_or_array_layers: 1 }) as u32),
+                        rows_per_image: Some(HEIGHT as u32),
+                    },
+                    SCREEN_EXTENT,
+                );
+            }
+        }
+        
         // Submit the encoded render pass to the GPU for rendering
         self.queue.submit([encoder.finish()]);
 
