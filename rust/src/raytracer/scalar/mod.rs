@@ -2,9 +2,7 @@ pub mod geometry;
 pub mod rng;
 pub mod shader;
 
-use rand::rngs::Xoshiro128PlusPlus;
-use rand::{Rng, SeedableRng};
-
+use crate::raytracer::rng::SFC32;
 use crate::raytracer::*;
 use crate::raytracer::scalar::geometry::{Geo, Intersection, IntersectionGeo, cube, square, transform_in_place};
 use crate::raytracer::math::{Mat33f32, Bgraf32, Vec3f32, deg_to_rad, map_range};
@@ -15,7 +13,7 @@ type GeoId = usize;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
-fn random_jitter(prng: &mut Xoshiro128PlusPlus) -> (f32, f32) {
+fn random_jitter(prng: &mut SFC32::<u32>) -> (f32, f32) {
     let x_jitter_int = prng.next_u32() & 0xFFFFFFFF;
     let y_jitter_int = prng.next_u32() & 0xFFFFFFFF;
 
@@ -26,7 +24,7 @@ fn random_jitter(prng: &mut Xoshiro128PlusPlus) -> (f32, f32) {
 }
 
 // 3D vector that is evenly distributed on the unit sphere
-fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3f32 {
+fn random_unit_vector(prng: &mut SFC32::<u32>) -> Vec3f32 {
     loop {
         // get 64 bits of randomness
         let next = ((prng.next_u32() as u64) << 32) | (prng.next_u32() as u64);
@@ -54,13 +52,13 @@ fn random_unit_vector(prng: &mut Xoshiro128PlusPlus) -> Vec3f32 {
 }
 
 // return is random value in [0, 1]
-fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
+fn random_alpha(prng: &mut SFC32::<u32>) -> f32 {
     let int = prng.next_u32() & 0xFFFFFFFF;
     return (int as f32) / (0xFFFFFFFFu32 as f32);
 }
 
 pub struct RaytracerScalar {
-    pub main_prng: Xoshiro128PlusPlus,
+    pub main_prng: SFC32::<u32>,
     pub geos: Vec<Geo>,
     pub accumulator_buf: Box<[Bgraf32]>,
     pub accumulate_steps: u32,
@@ -70,7 +68,7 @@ impl RaytracerScalar {
     pub fn new() -> Self {
         let mut raytracer = Self {
             // start the PRNGs from 0 seed always
-            main_prng: Xoshiro128PlusPlus::seed_from_u64(0),
+            main_prng: SFC32::<u32>::seed(0),
             geos: Vec::new(),
             accumulator_buf: vec![Bgraf32::zero(); HEIGHT * WIDTH as usize].into_boxed_slice(),
             accumulate_steps: 0,
@@ -118,15 +116,13 @@ impl RaytracerScalar {
     }
 
     fn update_and_dither_output_buffer(&mut self, buf: &mut RaytracerBuf) {
-        let mut dither_prng = rand::rngs::Xoshiro128PlusPlus::seed_from_u64(0);
+        let mut dither_prng = SFC32::<u32>::seed(0);
 
         for row in 0..HEIGHT {
             for col in 0..WIDTH {
-                // prng.next_u64() returns integer with uniform distribution in the entire u64 domain
-                let next = dither_prng.next_u64();
+                // prng.next_u32() returns integer with uniform distribution in the entire u32 domain
+                let int = dither_prng.next_u32();
 
-                // get bottom half to get a 32-bit var where each bit is I.I.D.
-                let int = next & 0xFFFFFFFF;
                 let uniform_rect_dist = ((int as f32) / (0xFFFFFFFFu32 as f32) - 0.5)
                                         * (1. / (DITHER_DIVISOR as f32));
 

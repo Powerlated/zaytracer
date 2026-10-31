@@ -4,29 +4,24 @@ pub mod avx512;
 pub mod geometry;
 pub mod rng_portable_simd;
 
-use std::marker::ConstParamTy;
 use std::arch::x86_64::*;
 // use std::arch::x86_64::*;
-use std::simd::u32x16;
-
-use rand::rngs::Xoshiro128PlusPlus;
-use rand::Rng;
 
 use crate::raytracer::math::{
     Bgra, Bgraf32, MulAdd, Vec3, Vec3f32, deg_to_rad,
 };
+use crate::raytracer::rng::SFC32;
 use crate::raytracer::scalar::RaytracerScalar;
 use crate::raytracer::scalar::geometry::Geo;
 use crate::raytracer::scalar::shader::MaterialShader;
 use crate::raytracer::simd::avx512::*;
 use crate::raytracer::simd::geometry::TriSimd;
-use crate::raytracer::simd::rng_portable_simd::SFC32Simd;
 use crate::raytracer::*;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)
 #[inline]
-fn random_jitter(prng: &mut SFC32Simd) -> (F32x16, F32x16) {
+fn random_jitter(prng: &mut SFC32<U32x16>) -> (F32x16, F32x16) {
     /// `int`: lower 23 bits must be I.I.D.
     /// Returns random float in [-0.5, 0.5].
     #[inline]
@@ -48,13 +43,13 @@ fn random_jitter(prng: &mut SFC32Simd) -> (F32x16, F32x16) {
     let y_jitter_int = prng.next_u32();
 
     return (
-        float_hack_negpoint5_to_point5(__m512i::from(x_jitter_int)).into(),
-        float_hack_negpoint5_to_point5(__m512i::from(y_jitter_int)).into(),
+        float_hack_negpoint5_to_point5(__m512i::from(x_jitter_int.0)).into(),
+        float_hack_negpoint5_to_point5(__m512i::from(y_jitter_int.0)).into(),
     );
 }
 
 struct RandomUnitVectorGenerator {
-    prng: SFC32Simd,
+    prng: SFC32<U32x16>,
     buf: [[f32; 32]; 3],
     buf_pos: usize,
 }
@@ -62,7 +57,7 @@ struct RandomUnitVectorGenerator {
 impl RandomUnitVectorGenerator {
     fn new() -> Self {
         Self {
-            prng: SFC32Simd::seed(u32x16::from(
+            prng: SFC32::<U32x16>::seed(U32x16::from(
                 std::array::from_fn::<u32, 16, _>(|i| i as u32),
             )),
             buf: [[0.0; 32]; 3],
@@ -75,7 +70,7 @@ impl RandomUnitVectorGenerator {
     fn next(&mut self) -> Vec3<F32x16> {
         loop {
             // get three random values - 96 bits of randomness per vector
-            let xyz_int: [u32x16; 3] = [
+            let xyz_int: [U32x16; 3] = [
                 self.prng.next_u32(),
                 self.prng.next_u32(),
                 self.prng.next_u32(),
@@ -105,9 +100,9 @@ impl RandomUnitVectorGenerator {
             }
 
             let xyz_float = Vec3::<F32x16>::from_xyz(
-                F32x16::from(float_hack_neg1_to_1(xyz_int[0].into())),
-                F32x16::from(float_hack_neg1_to_1(xyz_int[1].into())),
-                F32x16::from(float_hack_neg1_to_1(xyz_int[2].into())),
+                F32x16::from(float_hack_neg1_to_1(xyz_int[0].0.into())),
+                F32x16::from(float_hack_neg1_to_1(xyz_int[1].0.into())),
+                F32x16::from(float_hack_neg1_to_1(xyz_int[2].0.into())),
             );
 
             let inv_xyz_magn = xyz_float.inv_magnitude_rsqrt14();
@@ -144,7 +139,7 @@ impl RandomUnitVectorGenerator {
 }
 
 // return is random value in [0, 1]
-fn random_alpha(prng: &mut Xoshiro128PlusPlus) -> f32 {
+fn random_alpha(prng: &mut SFC32::<u32>) -> f32 {
     let int = prng.next_u32() & 0xFFFFFFFF;
     return (int as f32) / (0xFFFFFFFFu32 as f32);
 }
@@ -227,7 +222,7 @@ impl SecondaryBuffer {
 }
 
 pub struct RaytracerSimd<const REBUNDLE_BELOW: u32> {
-    main_prng: SFC32Simd,
+    main_prng: SFC32::<U32x16>,
     random_unit_vector_gen: RandomUnitVectorGenerator,
     geos: Vec<TriSimd>,
     intermediate_buf: Bgra<Box<[f32; INTERMEDIATE_BUF_LEN]>>,
@@ -270,7 +265,7 @@ impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
 
         Self {
             // start the PRNGs from consistent seed always
-            main_prng: SFC32Simd::seed(u32x16::from(
+            main_prng: SFC32::<U32x16>::seed(U32x16::from(
                 std::array::from_fn::<u32, 16, _>(|i| i as u32),
             )),
             random_unit_vector_gen: RandomUnitVectorGenerator::new(),

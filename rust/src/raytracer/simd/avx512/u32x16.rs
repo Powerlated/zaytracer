@@ -77,12 +77,19 @@ impl Into<[u32; 16]> for U32x16 {
     }
 } 
 
+impl From<[u32; 16]> for U32x16 {
+    #[inline] fn from(v: [u32; 16]) -> U32x16 {
+        unsafe { U32x16(_mm512_loadu_epi32(v.as_ptr() as *const i32)) }
+    }
+}
+
 impl From<&[u32; 16]> for U32x16 {
     #[inline] fn from(v: &[u32; 16]) -> U32x16 {
         unsafe { U32x16(_mm512_loadu_epi32(v.as_ptr() as *const i32)) }
     }
 }
 
+// U32x16 + U32x16
 impl Add<U32x16> for U32x16 {
     type Output = U32x16;
     #[inline] fn add(self, _rhs: U32x16) -> U32x16 {
@@ -90,6 +97,7 @@ impl Add<U32x16> for U32x16 {
     }
 }
 
+// U32x16 + u32
 impl Add<u32> for U32x16 {
     type Output = U32x16;
     #[inline] fn add(self, _rhs: u32) -> U32x16 {
@@ -97,6 +105,7 @@ impl Add<u32> for U32x16 {
     }
 }
 
+// U32x16 - U32x16
 impl Sub<U32x16> for U32x16 {
     type Output = U32x16;
     #[inline] fn sub(self, _rhs: U32x16) -> U32x16 {
@@ -104,6 +113,7 @@ impl Sub<U32x16> for U32x16 {
     }
 }
 
+// U32x16 - u32
 impl Sub<u32> for U32x16 {
     type Output = U32x16;
     #[inline] fn sub(self, _rhs: u32) -> U32x16 {
@@ -111,6 +121,7 @@ impl Sub<u32> for U32x16 {
     }
 }
 
+// U32x16 * U32x16
 impl Mul<U32x16> for U32x16 {
     type Output = U32x16;
     #[inline] fn mul(self, _rhs: U32x16) -> U32x16 {
@@ -118,10 +129,51 @@ impl Mul<U32x16> for U32x16 {
     }
 }
 
+// U32x16 * u32
 impl Mul<u32> for U32x16 {
     type Output = U32x16;
     #[inline] fn mul(self, _rhs: u32) -> U32x16 {
         unsafe { U32x16(_mm512_mullo_epi32(self.0, _mm512_set1_epi32(_rhs as i32))) }
+    }
+}
+
+// U32x16 & U32x16
+impl BitAnd<U32x16> for U32x16 {
+    type Output = U32x16;
+    #[inline] fn bitand(self, _rhs: U32x16) -> U32x16 {
+        unsafe { U32x16(_mm512_and_epi32(self.0, _rhs.0)) }
+    }
+}
+
+// U32x16 | U32x16
+impl BitOr<U32x16> for U32x16 {
+    type Output = U32x16;
+    #[inline] fn bitor(self, _rhs: U32x16) -> U32x16 {
+        unsafe { U32x16(_mm512_or_epi32(self.0, _rhs.0)) }
+    }
+}
+
+// U32x16 ^ U32x16
+impl BitXor<U32x16> for U32x16 {
+    type Output = U32x16;
+    #[inline] fn bitxor(self, _rhs: U32x16) -> U32x16 {
+        unsafe { U32x16(_mm512_xor_epi32(self.0, _rhs.0)) }
+    }
+}
+
+// U32x16 << u8
+impl Shl<u8> for U32x16 {
+    type Output = U32x16;
+    #[inline] fn shl(self, _rhs: u8) -> U32x16 {
+        unsafe { U32x16(_mm512_sll_epi32(self.0, _mm_set1_epi8(_rhs as i8))) }
+    }
+}
+
+// U32x16 >> u8
+impl Shr<u8> for U32x16 {
+    type Output = U32x16;
+    #[inline] fn shr(self, _rhs: u8) -> U32x16 {
+        unsafe { U32x16(_mm512_srl_epi32(self.0, _mm_set1_epi8(_rhs as i8))) }
     }
 }
 

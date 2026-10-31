@@ -286,10 +286,10 @@ impl WgpuState {
         if let Some(raytrace_finish_time) = self.raytrace_finish_time
          && let Some(raytrace_start_time) = self.raytrace_start_time {
             // If raytracing is done
-            suffix = format!("{:.3} s", (raytrace_finish_time - raytrace_start_time).as_secs_f64());
+            suffix = format!(" {:.3} s", (raytrace_finish_time - raytrace_start_time).as_secs_f64());
         } else if let Some(raytrace_start_time) = self.raytrace_start_time {
             // If raytracing is ongoing
-            suffix = format!("{} s", raytrace_start_time.elapsed().as_secs());
+            suffix = format!(" {} s", raytrace_start_time.elapsed().as_secs());
         } else {
             // If raytracing has not started yet
             suffix = "".to_string();
@@ -298,15 +298,17 @@ impl WgpuState {
         #[cfg(not(feature = "no_simd"))]
         let lanes_active_pct = self.raytracer.lanes_active * 100 / self.raytracer.lanes_computed;
         #[cfg(not(feature = "no_simd"))]
-        let lanes_active_pct_formatted = format!("{}%", lanes_active_pct);
+        let lanes_active_pct_formatted = format!(" {}% lane util", lanes_active_pct);
+        #[cfg(feature = "no_simd")]
+        let lanes_active_pct_formatted = String::from("");
 
-        self.arc_window.set_title(format!("Brian Jia - Raytracer {} [{}/{}] {} {} lane util {}", 
-            if cfg!(feature = "no_simd") { "Scalar" } else { "SIMD" },
+        self.arc_window.set_title(format!("Brian Jia - Raytracer{} [{}/{}]{}{}{}", 
+            if cfg!(feature = "no_simd") { " Scalar" } else { " SIMD" },
             accumulated_samples,
             MAX_ACCUMULATE_STEPS,
             suffix,
-            if cfg!(feature = "no_simd") {""} else {lanes_active_pct_formatted.as_str()},
-            GIT_HASH_AND_DIRTY_STR
+            lanes_active_pct_formatted.as_str(),
+            format!(" {}", GIT_HASH_AND_DIRTY_STR).as_str()
         ).as_str());
 
         self.queue.write_texture(

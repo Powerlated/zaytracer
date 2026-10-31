@@ -22,7 +22,7 @@ fn main() {
     let raytracer = RaytracerScalar::new();
 
     #[cfg(not(feature = "no_simd"))]
-    let mut raytracer = RaytracerSimd::from_scalar(raytracer);
+    let mut raytracer = RaytracerSimd::<14>::from_scalar(raytracer);
 
     // Warm up the cache
     for _ in 0..16 {

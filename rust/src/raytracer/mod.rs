@@ -1,6 +1,7 @@
 pub mod scalar;
 pub mod simd;
 pub mod math;
+pub mod rng;
 
 pub const WIDTH: usize = 640;
 pub const HEIGHT: usize = 480;

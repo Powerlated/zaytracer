@@ -19,7 +19,6 @@ core_affinity = "0.8.3"
 fearless_simd = "1.2.0"
 fearless_simd_macros = "0.1.0"
 pollster = "1.0.1"
-rand = "0.10.3"
 rkyv = { version = "0.8.18", features = ["alloc"] }
 soa_derive = "0.14.0"
 thread-priority = "3.1.1"
@@ -29,3 +28,6 @@ winit = "0.30.13"
 
 [profile.release]
 debug = true
+
+[build-dependencies]
+build-graph = "0.1.0"
