@@ -398,9 +398,9 @@ impl WgpuState {
 
     fn statusline(&self) -> String {
         if IS_SIMD {
-            return format!(" {}% lane util", self.arc_lanes_active_pct.load(std::sync::atomic::Ordering::Relaxed));
+            return format!(" {}% lane util, 1 thread", self.arc_lanes_active_pct.load(std::sync::atomic::Ordering::Relaxed));
         } else {
-            return "".to_string();
+            return format!(" {} threads", NUM_WORKERS_SCALAR);
         }
     }
 }
