@@ -355,6 +355,19 @@ impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
                 }
             }
 
+            // convert accumulator buffer into output buffer
+            for i in 0..ACCUMULATOR_BUF_LEN {
+                let converted = Bgraf32::from_rgb_f32(self.accumulator_buf.val[2][i],
+                                                      self.accumulator_buf.val[1][i],
+                                                      self.accumulator_buf.val[0][i])
+                                                      .mul_scalar(1. / self.accumulate_steps as f32)
+                                                      .to_bgra8888();
+                buf[i*4+0] = converted[0]; 
+                buf[i*4+1] = converted[1];
+                buf[i*4+2] = converted[2];
+                buf[i*4+3] = 0xFF;
+            }
+
             self.accumulate_steps += 1;
         }
 

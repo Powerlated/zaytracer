@@ -25,9 +25,9 @@ use crate::raytracer::{FORCE_HIDPI, HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar:
 use crate::raytracer::simd::*;
 use ::raytracer::GIT_HASH_AND_DIRTY_STR;
 
-#[cfg(feature = "no_simd")]
+#[cfg(not(feature = "simd"))]
 const IS_SIMD: bool = false;
-#[cfg(not(feature = "no_simd"))]
+#[cfg(feature = "simd")]
 const IS_SIMD: bool = true;
 
 mod raytracer;
@@ -234,6 +234,7 @@ impl WgpuState {
             raytrace_finish_time: None,
         };
         
+        #[cfg(not(feature = "simd"))]
         for i in 0..NUM_WORKERS_SCALAR {
             assert!(HEIGHT % NUM_WORKERS_SCALAR == 0);
             let rows_per_worker = HEIGHT / NUM_WORKERS_SCALAR;
@@ -355,7 +356,7 @@ impl WgpuState {
         }
 
         self.arc_window.set_title(format!("Brian Jia - Raytracer{} [{}/{}]{}{}{}", 
-            if cfg!(feature = "no_simd") { " Scalar" } else { " SIMD" },
+            if cfg!(feature = "simd") { " SIMD" } else { " Scalar" },
             accumulated_samples,
             MAX_ACCUMULATE_STEPS,
             suffix,
@@ -440,13 +441,14 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     
     // TODO for multithreaded non-SIMD
-    #[cfg(not(feature = "no_simd"))]
+    #[cfg(feature = "simd")]
     {
         // Move this thread onto the highest-numbered logical core
         let core_ids = core_affinity::get_core_ids().unwrap();
         core_affinity::set_for_current(*core_ids.last().unwrap());
         
         // Set this thread to high priority
+        #[cfg(windows)]
         thread_priority::set_winapi_thread_priority(
             thread_priority::thread_native_id(), 
             thread_priority::WinAPIThreadPriority::Highest

@@ -1,7 +1,7 @@
 [workspace]
 members = [
     ".",
-    "profiling"
+    # "profiling"
 ]
 
 [package]
@@ -11,7 +11,8 @@ edition = "2024"
 default-run = "raytracer"
 
 [features]
-no_simd = []
+default = ["simd"]
+simd = []
 
 [dependencies]
 bytemuck = "1.25.2"
