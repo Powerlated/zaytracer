@@ -7,8 +7,8 @@ pub mod rng_portable_simd;
 use std::arch::x86_64::*;
 
 
+use crate::Scene;
 use crate::raytracer::rng::SFC32;
-use crate::raytracer::scalar::RaytracerScalar;
 use crate::raytracer::simd::avx512::*;
 use crate::raytracer::simd::geometry::TriSimd;
 use crate::raytracer::*;
@@ -231,7 +231,7 @@ pub struct RaytracerSimd<const REBUNDLE_BELOW: u32> {
 }
 
 impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
-    pub fn from_scalar(raytracer_scalar: RaytracerScalar) -> Self {
+    pub fn from_scene(scene: Scene) -> Self {
         let mut geos = Vec::new();
         let mut shaders = Vec::new();
 
@@ -249,7 +249,7 @@ impl<const REBUNDLE_BELOW: u32> RaytracerSimd<REBUNDLE_BELOW> {
         // shaders[0] is backgrond color
         shaders.push(MaterialShader { color: Bgraf32::from_rgb_f32(0., 0., 0.), emission: 0.0 });
 
-        for geo in raytracer_scalar.geos {
+        for geo in scene.geos {
             match geo {
                 Geo::Tri(tri) => {
                     geos.push(TriSimd::from_scalar_tri(tri));

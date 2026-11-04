@@ -125,7 +125,7 @@ impl WgpuState {
             let arc_threads_should_exit = arc_threads_should_exit.clone();
             
             thread_handles.push(thread::spawn(move || {
-                let mut raytracer = RaytracerSimd::<14>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+                let mut raytracer = RaytracerSimd::<14>::from_scene(Scene::cornell_box());
                 for i in 0..MAX_ACCUMULATE_STEPS {
                     raytracer.raytrace_step(acc_slice);
                     let lanes_active_pct = raytracer.lanes_active * 100 / raytracer.lanes_computed;
