@@ -1,6 +1,6 @@
 use std::{arch::x86_64::*, ops::*};
 
-use crate::raytracer::simd::avx512::F32x16;
+use crate::raytracer::simd::avx512::*;
 
 pub struct U8x16 (pub __m128i);
 

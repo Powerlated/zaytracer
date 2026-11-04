@@ -5,18 +5,16 @@ pub mod geometry;
 pub mod rng_portable_simd;
 
 use std::arch::x86_64::*;
-// use std::arch::x86_64::*;
 
-use crate::raytracer::math::{
-    Bgra, Bgraf32, MulAdd, Vec3, Vec3f32, deg_to_rad,
-};
+
 use crate::raytracer::rng::SFC32;
 use crate::raytracer::scalar::RaytracerScalar;
-use crate::raytracer::scalar::geometry::Geo;
-use crate::raytracer::scalar::shader::MaterialShader;
 use crate::raytracer::simd::avx512::*;
 use crate::raytracer::simd::geometry::TriSimd;
 use crate::raytracer::*;
+use crate::scene::Geo;
+use crate::shader::*;
+use crate::math::*;
 
 // 2-tuple with each entry being random value in [-0.5, 0.5]
 // TODO: I heard that random jitter causes a non-uniform sampling distribution (clumping)

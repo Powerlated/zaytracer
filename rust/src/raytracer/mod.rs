@@ -1,8 +1,7 @@
-use crate::raytracer::math::Bgraf32;
+use crate::math::Bgraf32;
 
 pub mod scalar;
 pub mod simd;
-pub mod math;
 pub mod rng;
 
 pub const WIDTH: usize = 640;

@@ -1,13 +1,12 @@
 pub mod geometry;
 pub mod rng;
-pub mod shader;
 
+use crate::math::{Vec3f32, deg_to_rad, map_range};
 use crate::raytracer::rng::SFC32;
 use crate::raytracer::*;
-use crate::raytracer::scalar::geometry::{Geo, Intersection, IntersectionGeo, cube, square, transform_in_place};
-use crate::raytracer::math::{Mat33f32, Bgraf32, Vec3f32, deg_to_rad, map_range};
-use crate::raytracer::scalar::shader::TriShader::{Material, PerVertex};
-use crate::raytracer::scalar::shader::{MaterialShader, TriShader};
+use crate::raytracer::scalar::geometry::{Intersection, IntersectionGeo};
+use crate::scene::{Geo, Scene, Tri};
+use crate::shader::TriShader::{Material, PerVertex};
 
 type GeoId = usize;
 
@@ -62,49 +61,9 @@ pub struct RaytracerScalar {
 }
 
 impl RaytracerScalar {
-    pub fn new() -> Self {
-        let mut raytracer = Self {
-            geos: Vec::new(),
-        };
-
-        let mut light = square(1., TriShader::Material(MaterialShader::new_emissive(1., 1., 1., 7.)));
-        transform_in_place(&mut light, Mat33f32::rotation(90., 0., 0.).translate(0., 0.999, 1.));
-        raytracer.add_geos(&light);
-
-        // *CORNELL BOX MENTIONED*
-
-        let mut left_wall = square(2., TriShader::Material(MaterialShader::new_diffuse(1., 0., 0.)));
-        transform_in_place(&mut left_wall, Mat33f32::rotation(  0.,  90.,  0.).translate( 1., 0., 1.25));
-        raytracer.add_geos(&left_wall);
-        
-        let mut right_wall = square(2., TriShader::Material(MaterialShader::new_diffuse(0., 1., 0.)));
-        transform_in_place(&mut right_wall, Mat33f32::rotation(  0., -90.,  0.).translate(-1., 0., 1.25));
-        raytracer.add_geos(&right_wall);
-        
-        let mut roof = square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.)));
-        transform_in_place(&mut roof, Mat33f32::rotation(  90.,  0.,  0.).translate(0.,  1., 1.25));
-        raytracer.add_geos(&roof);
-        
-        let mut floor = square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.)));
-        transform_in_place(&mut floor, Mat33f32::rotation( -90.,  0.,  0.).translate(0., -1., 1.25));
-        raytracer.add_geos(&floor);
-
-        // try add_quad(Vec3::from_xyz(0, 0.999, 1), 1, 0, 0, 90, .{.material = MaterialShader::new_emissive(0, 0, 1, 1)}); // light
-
-        let mut rear_wall = square(2., TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.)));    // rear wall
-        transform_in_place(&mut rear_wall, Mat33f32::rotation(  0.,  0.,  0.).translate(0.,  0., 2.25));
-        raytracer.add_geos(&rear_wall);
-
-        let mut cube = cube(0.5);
-        transform_in_place(&mut cube, Mat33f32::rotation(0., -70., 0.).translate(-0.25, -0.75, 1.25));
-        raytracer.add_geos(&cube);
-
-        raytracer
-    }
-
-    fn add_geos(&mut self, geos_to_add: &[Geo]) {
-        for geo_to_add in geos_to_add {
-            self.geos.push((*geo_to_add).clone());
+    pub fn from_scene(scene: Scene) -> Self {
+        Self {
+            geos: scene.geos
         }
     }
 

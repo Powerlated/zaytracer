@@ -1,6 +1,7 @@
 use std::{arch::x86_64::*, ops::*};
 
-use crate::raytracer::{math::*, simd::avx512::{F32x4, U32x16}};
+use crate::math::*;
+use crate::raytracer::simd::avx512::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct F32x16 (pub __m512);

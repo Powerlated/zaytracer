@@ -1,4 +1,6 @@
-use crate::raytracer::{math::{Bgra, Mat33, Mat33f32, Vec3, Vec3f32}, scalar::{geometry::Tri, shader::{MaterialShader, TriShader}}, simd::avx512::F32x16};
+use crate::{math::{Vec3, Vec3f32}, raytracer::simd::avx512::F32x16, scene::Tri};
+use crate::shader::*;
+use crate::math::*;
 
 pub struct TriIntersectionSimd {
     pub p: Vec3::<F32x16>, // Point of intersection

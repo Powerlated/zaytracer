@@ -5,16 +5,13 @@
 
 mod raytracer_display;
 
-use std::ops::DerefMut;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Mutex};
 
-use std::borrow::Cow;
 use std::thread::JoinHandle;
 use std::{array, thread};
-use std::time::Instant;
-use rkyv::vec;
+use raytracer::math::Bgraf32;
 use wgpu::Extent3d;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
@@ -22,22 +19,18 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHan
 use winit::keyboard::{KeyCode, KeyLocation, PhysicalKey};
 use winit::window::{Window, WindowButtons, WindowId};
 
-use crate::AppMode::Raytrace;
-use crate::raytracer::math::Bgraf32;
-use crate::raytracer::rng::SFC32;
-use crate::raytracer::{RaytracerBuf, new_raytracer_buf};
-use crate::raytracer::NUM_WORKERS_SCALAR;
-use crate::raytracer::{FORCE_HIDPI, HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
-use crate::raytracer::simd::*;
+use raytracer::rng::SFC32;
+use raytracer::{RaytracerBuf, Scene, new_raytracer_buf};
+use raytracer::NUM_WORKERS_SCALAR;
+use raytracer::{FORCE_HIDPI, HEIGHT, MAX_ACCUMULATE_STEPS, WIDTH, scalar::*};
+use raytracer::simd::*;
 use crate::raytracer_display::RaytracerDisplay;
-use ::raytracer::GIT_HASH_AND_DIRTY_STR;
+use raytracer::GIT_HASH_AND_DIRTY_STR;
 
 #[cfg(not(feature = "simd"))]
 const IS_SIMD: bool = false;
 #[cfg(feature = "simd")]
 const IS_SIMD: bool = true;
-
-mod raytracer;
 
 // **examples this is based off**
 // https://github.com/gfx-rs/wgpu/blob/trunk/examples/standalone/02_hello_window/src/main.rs#L3
@@ -113,7 +106,7 @@ impl WgpuState {
         });
 
         let mut accumulator_buf = new_raytracer_buf();
-        let arc_raytracer_scalar = Arc::new(RaytracerScalar::new());
+        let arc_raytracer_scalar = Arc::new(RaytracerScalar::from_scene(Scene::cornell_box()));
         let arc_num_samples_accumulated = array::from_fn(|_| Arc::new(AtomicU32::new(0)));
         let arc_lanes_active_pct = Arc::new(AtomicU32::new(0));
         let arc_threads_should_exit = Arc::new(AtomicBool::new(false));
@@ -132,7 +125,7 @@ impl WgpuState {
             let arc_threads_should_exit = arc_threads_should_exit.clone();
             
             thread_handles.push(thread::spawn(move || {
-                let mut raytracer = RaytracerSimd::<14>::from_scalar(RaytracerScalar::new());
+                let mut raytracer = RaytracerSimd::<14>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
                 for i in 0..MAX_ACCUMULATE_STEPS {
                     raytracer.raytrace_step(acc_slice);
                     let lanes_active_pct = raytracer.lanes_active * 100 / raytracer.lanes_computed;
@@ -318,7 +311,7 @@ impl WgpuState {
         self.queue.present(surface_texture);
     }
 
-    fn do_cool_viz(&mut self) {
+    fn do_realtime(&mut self) {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) => texture,
             wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -435,7 +428,7 @@ impl ApplicationHandler for App {
                         state.do_raytrace();
                     },
                     AppMode::CoolViz => {
-                        state.do_cool_viz();
+                        state.do_realtime();
                     }
                 }
 

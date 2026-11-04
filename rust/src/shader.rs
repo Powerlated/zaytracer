@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-use crate::raytracer::math::Bgraf32;
+use crate::math::Bgraf32;
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]

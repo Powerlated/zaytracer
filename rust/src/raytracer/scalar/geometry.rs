@@ -1,10 +1,5 @@
-use crate::raytracer::scalar::{MaterialShader, TriShader, math::{Mat33, Mat44, Vec3f32}, shader::TriPerVertexShader};
-
-#[derive(Clone)]
-pub enum Geo {
-    Tri(Tri),
-    // sphere: Sphere,
-}
+use crate::math::*;
+use crate::scene::*;
 
 pub enum IntersectionGeo<'a> {
     Tri(TriIntersection<'a>),
@@ -16,15 +11,6 @@ pub struct Intersection<'a> {
     pub n: Vec3f32, // Normalized normal vector of intersection surface
     pub t: f32, // t value of intersection
     pub specific: IntersectionGeo<'a>, 
-}
-
-#[derive(Clone)]
-pub struct Tri {
-    // Vertices. typical notation in math is (A, B, C)
-    pub v: [Vec3f32; 3],
-    pub shader: TriShader,
-    // TODO: derive normal direction from winding order?
-    // n: Vec3, // n^\hat is normalized normal vector
 }
 
 #[derive(Clone)]
@@ -122,7 +108,8 @@ impl Tri {
 
 #[cfg(test)]
 mod test {
-    use crate::raytracer::scalar::{geometry::Tri, math::Vec3f32, shader::{MaterialShader, TriShader}};
+    use crate::{math::Vec3f32, raytracer::scalar::geometry::Tri, shader::{MaterialShader, TriShader}};
+
 
     const EPSILON: f32 = 1e-5;
     fn expect_intersect(tri: Tri, o: Vec3f32, d: Vec3f32, intersect_pos: [f32; 3], t: f32) {
@@ -215,80 +202,6 @@ mod test {
 struct Sphere {
     center: Vec3f32, // typical notation in math is (h, k, j)
     radius: f32,
-}
-
-fn trongle() -> Geo {
-    Geo::Tri(Tri {
-            v: [
-                Vec3f32::from_xyz(0.5, -0.5, 1.),
-                Vec3f32::from_xyz(-0.5, -0.5, 1.),
-                Vec3f32::from_xyz(0., 0.5, 1.)
-            ],
-            shader: TriShader::PerVertex(
-                TriPerVertexShader { colors: [
-                    [ 1., 0., 0., 0.5 ],
-                    [ 0., 1., 0., 0.5 ],
-                    [ 0., 0., 1., 0.5 ]
-                ]}
-            )
-        },
-    )
-}
-
-/// Square with side length `len`, centered on (0, 0, 0), normal facing (0, 0, 1).
-pub fn square(len: f32, shader: TriShader) -> [Geo; 2] {
-    let half_len = len;
-
-    let t1 = Tri {
-        v: [
-            Vec3f32::from_xyz(-half_len / 2., -half_len / 2., 0.),
-            Vec3f32::from_xyz(-half_len / 2.,  half_len / 2., 0.),
-            Vec3f32::from_xyz( half_len / 2.,  half_len / 2., 0.)
-        ],
-        shader: shader.clone(),
-    };
-
-    let t2 = Tri {
-        v: [
-            Vec3f32::from_xyz( half_len / 2., -half_len / 2., 0.),
-            Vec3f32::from_xyz(-half_len / 2., -half_len / 2., 0.),
-            Vec3f32::from_xyz( half_len / 2.,  half_len / 2., 0.),
-        ],
-        shader: shader.clone(),
-    };
-
-    let g1 = Geo::Tri(t1);
-    let g2 = Geo::Tri(t2);
-
-    return [g1, g2];
-}
-    
-/// Cube with side length `len`, centered on (0, 0, 0).
-pub fn cube(len: f32) -> [Geo; 12] {
-    let f0 = square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))); //  x
-    let f1 = square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))); //  y
-    let f2 = square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))); //  z
-    let f3 = square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))); // -x
-    let f4 = square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))); // -y
-    let f5 = square(len, TriShader::Material(MaterialShader::new_diffuse(1., 1., 1.))); // -z   
-
-    let mut faces = [
-        f0[0].clone(), f0[1].clone(),
-        f1[0].clone(), f1[1].clone(),
-        f2[0].clone(), f2[1].clone(),
-        f3[0].clone(), f3[1].clone(),
-        f4[0].clone(), f4[1].clone(),
-        f5[0].clone(), f5[1].clone()
-    ];
-
-    transform_in_place(&mut faces[0..2  ], Mat33::rotation(  0., -90.,  0.).translate( len/2.,      0.,      0.)); //  x
-    transform_in_place(&mut faces[2..4  ], Mat33::rotation(-90.,   0.,  0.).translate(     0.,  len/2.,      0.)); //  y
-    transform_in_place(&mut faces[4..6  ], Mat33::rotation(  0.,   0.,  0.).translate(     0.,      0.,  len/2.)); //  z
-    transform_in_place(&mut faces[6..8  ], Mat33::rotation(  0.,  90.,  0.).translate(-len/2.,      0.,      0.)); // -x
-    transform_in_place(&mut faces[8..10 ], Mat33::rotation( 90.,   0.,  0.).translate(     0., -len/2.,      0.)); // -y
-    transform_in_place(&mut faces[10..12], Mat33::rotation(180.,   0.,  0.).translate(     0.,      0., -len/2.)); // -z
-
-    return faces;
 }
 
 pub fn transform_in_place(geos: &mut [Geo], transformation: Mat44) {

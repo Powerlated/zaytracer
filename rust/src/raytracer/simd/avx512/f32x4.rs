@@ -1,6 +1,7 @@
 use std::{arch::x86_64::*, ops::*};
 
-use crate::raytracer::math::Bgraf32;
+use crate::raytracer::simd::avx512::*;
+use crate::math::*;
 
 pub struct F32x4 (pub __m128);
 

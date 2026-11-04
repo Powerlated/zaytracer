@@ -1,12 +1,13 @@
 use std::time::Duration;
 
+use raytracer::math::Bgraf32;
 use raytracer::raytracer::MAX_ACCUMULATE_STEPS;
-use raytracer::raytracer::math::Bgraf32;
 use raytracer::raytracer::scalar::RaytracerScalar;
 use raytracer::raytracer::simd::RaytracerSimd;
 use raytracer::raytracer::RaytracerBuf;
 use raytracer::raytracer::WIDTH;
 use raytracer::raytracer::HEIGHT;
+use raytracer::scene::Scene;
 
 fn raytrace_to_completion<const N: u32>(tracer: &mut RaytracerSimd<N>, buf: &mut RaytracerBuf) {
     for _ in 0..MAX_ACCUMULATE_STEPS {
@@ -36,22 +37,22 @@ fn main() {
 
     const ITERS: usize = 5;
     for _ in 0..ITERS {
-        let mut tracer0 = RaytracerSimd::<0>::from_scalar(RaytracerScalar::new());
-        let mut tracer1 = RaytracerSimd::<1>::from_scalar(RaytracerScalar::new());
-        let mut tracer2 = RaytracerSimd::<2>::from_scalar(RaytracerScalar::new());
-        let mut tracer3 = RaytracerSimd::<3>::from_scalar(RaytracerScalar::new());
-        let mut tracer4 = RaytracerSimd::<4>::from_scalar(RaytracerScalar::new());
-        let mut tracer5 = RaytracerSimd::<5>::from_scalar(RaytracerScalar::new());
-        let mut tracer6 = RaytracerSimd::<6>::from_scalar(RaytracerScalar::new());
-        let mut tracer7 = RaytracerSimd::<7>::from_scalar(RaytracerScalar::new());
-        let mut tracer8 = RaytracerSimd::<8>::from_scalar(RaytracerScalar::new());
-        let mut tracer9 = RaytracerSimd::<9>::from_scalar(RaytracerScalar::new());
-        let mut tracer10 = RaytracerSimd::<10>::from_scalar(RaytracerScalar::new());
-        let mut tracer11 = RaytracerSimd::<11>::from_scalar(RaytracerScalar::new());
-        let mut tracer12 = RaytracerSimd::<12>::from_scalar(RaytracerScalar::new());
-        let mut tracer13 = RaytracerSimd::<13>::from_scalar(RaytracerScalar::new());
-        let mut tracer14 = RaytracerSimd::<14>::from_scalar(RaytracerScalar::new());
-        let mut tracer15 = RaytracerSimd::<15>::from_scalar(RaytracerScalar::new());
+        let mut tracer0 = RaytracerSimd::<0>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer1 = RaytracerSimd::<1>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer2 = RaytracerSimd::<2>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer3 = RaytracerSimd::<3>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer4 = RaytracerSimd::<4>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer5 = RaytracerSimd::<5>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer6 = RaytracerSimd::<6>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer7 = RaytracerSimd::<7>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer8 = RaytracerSimd::<8>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer9 = RaytracerSimd::<9>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer10 = RaytracerSimd::<10>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer11 = RaytracerSimd::<11>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer12 = RaytracerSimd::<12>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer13 = RaytracerSimd::<13>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer14 = RaytracerSimd::<14>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
+        let mut tracer15 = RaytracerSimd::<15>::from_scalar(RaytracerScalar::from_scene(Scene::cornell_box()));
 
         // Run in forward and reverse through the tracers
         let iter = (0..16usize).chain((0..16usize).rev());

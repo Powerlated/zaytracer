@@ -468,7 +468,7 @@ pub struct Mat44 {
 
 #[cfg(test)]
 mod tests {
-    use crate::raytracer::math::{Mat33f32, Vec3f32};
+    use crate::math::{Mat33f32, Vec3f32};
 
     #[test]
     fn identity_is_identity() {

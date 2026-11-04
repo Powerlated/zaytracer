@@ -1,5 +1,7 @@
 use std::{arch::x86_64::*, ops::*};
 
+use crate::raytracer::simd::avx512::*;
+
 #[derive(Clone, Copy)]
 pub struct U32x16 (pub __m512i);
 

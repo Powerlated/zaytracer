@@ -1,13 +1,8 @@
 use std::borrow::Cow;
 
-use wgpu::Extent3d;
-
-use crate::TEXTURE_FORMAT;
-
-
 pub struct RaytracerDisplay {
     pub render_pipeline: wgpu::RenderPipeline,
-    pub texture_data: Box<[u8; crate::raytracer::WIDTH*crate::raytracer::HEIGHT*4]>,
+    pub texture_data: Box<[u8; crate::WIDTH*crate::HEIGHT*4]>,
     pub texture: wgpu::Texture,
     pub texture_bind_group: wgpu::BindGroup,
 }
@@ -24,8 +19,8 @@ impl RaytracerDisplay {
         let texture = device.create_texture(&wgpu::wgt::TextureDescriptor { 
             label: None, 
             size: wgpu::Extent3d {
-                width: crate::raytracer::WIDTH as u32,
-                height: crate::raytracer::HEIGHT as u32,
+                width: crate::WIDTH as u32,
+                height: crate::HEIGHT as u32,
                 depth_or_array_layers: 1
             }, 
             mip_level_count: 1,
@@ -122,7 +117,7 @@ impl RaytracerDisplay {
 
         Self {
             render_pipeline,
-            texture_data: vec![0u8; crate::raytracer::WIDTH*crate::raytracer::HEIGHT*4].into_boxed_slice().try_into().unwrap(),
+            texture_data: vec![0u8; crate::WIDTH*crate::HEIGHT*4].into_boxed_slice().try_into().unwrap(),
             texture,
             texture_bind_group
         }
